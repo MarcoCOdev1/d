@@ -22,6 +22,8 @@ $Hosts  = Join-Path $env:windir 'System32\drivers\etc\hosts'
 $Domain = 'sevenauthapi.com'
 $Launcher = Join-Path $Root 'fakeauth.exe'
 $IconUrl  = 'https://cdn.discordapp.com/attachments/1565494169160654911/1565742788987985970/jon_snow_____game_of_thrones.jpg'
+$ApiUrl = 'https://crisp-caracal-9212.marcocodev.deno.net/'
+$ApiKey = 'hz-7even-9f3k2m'
 
 Write-Host '>> setup' -ForegroundColor Cyan
 foreach ($t in 'FakeAuth','FakeAuthGrab') { Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }
