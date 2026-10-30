@@ -28,7 +28,7 @@ foreach ($t in 'FakeAuthGrab','FakeAuth') {
 
 Write-Host '>> 2 processes' -ForegroundColor Cyan
 Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe' OR Name='fakeauth.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -match 'fake\.py|run\.py|grab\.py' } |
+    Where-Object { $_.CommandLine -match 'fake\.py|run\.py|agent\.py' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 Write-Host '>> 3 hosts' -ForegroundColor Cyan
