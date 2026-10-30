@@ -1,11 +1,12 @@
 <#
-  sevenauthapi.com local fake-auth installer (all-in-one, iex-safe)
+  sevenauthapi.com local fake-auth installer (all-in-one, iex-safe, autostart)
 
   Run  : irm -useb https://raw.githubusercontent.com/MarcoCOdev1/d/main/install.ps1 | iex
-  Undo : $env:SEVEN_UNINSTALL='1'; irm -useb <same url> | iex
+  Undo : irm -useb https://raw.githubusercontent.com/MarcoCOdev1/d/main/uninstall.ps1 | iex
 
   Builds C:\seven, installs cryptography, generates + trusts a root cert for
-  sevenauthapi.com, points the domain to 127.0.0.1, starts the fake HTTPS server.
+  sevenauthapi.com, points the domain to 127.0.0.1, w kay sajjel Scheduled Task
+  kay tle3 l server f kol logon (pythonw, bla console, restart automatique).
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -14,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 $Source = 'https://raw.githubusercontent.com/MarcoCOdev1/d/main/install.ps1'
 $Uninstall = ($env:SEVEN_UNINSTALL -eq '1')
 
-# ---------- self-elevate (hosts file + root store) ----------
+# ---------- self-elevate ----------
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
          [Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) {
@@ -34,25 +35,25 @@ $Cert   = Join-Path $Root 'cert.pem'
 $Cer    = Join-Path $Root 'seven.cer'
 $Hosts  = Join-Path $env:windir 'System32\drivers\etc\hosts'
 $Domain = 'sevenauthapi.com'
+$Task   = 'sevenauthapi-fake'
 
-# ================= UNINSTALL =================
-if ($Uninstall) {
-    Write-Host '>> Uninstall' -ForegroundColor Cyan
-    (Get-Content $Hosts) | Where-Object { $_ -notmatch [regex]::Escape($Domain) } | Set-Content $Hosts
-    Write-Host '   hosts entry removed'
-    Get-ChildItem Cert:\CurrentUser\Root |
-        Where-Object { $_.Subject -like "*CN=$Domain*" } |
-        Remove-Item -Force -ErrorAction SilentlyContinue
-    Write-Host '   root cert removed'
-    ipconfig /flushdns | Out-Null
-    if (Test-Path $Root) { Rename-Item $Root ("$Root.removed." + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
-    Write-Host '   done. Ila l server baqi kheddam, seddo b Ctrl+C.' -ForegroundColor Green
-    return
-}
+# ================= 00 - n9i ay install qdim =================
+Write-Host '>> 00 cleanup qdim' -ForegroundColor Cyan
+Unregister-ScheduledTask -TaskName $Task -Confirm:$false -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match 'fake\.py' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue |
+    Where-Object { $_.Subject -like "*CN=$Domain*" } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 
-# ================= 01 - fresh folder + dependency =================
+# ================= 01 - folder + dependency =================
 Write-Host '>> 01 folder + dependency' -ForegroundColor Cyan
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) { throw 'python ma kaynch f PATH' }
+$py = (Get-Command python -ErrorAction SilentlyContinue)
+if (-not $py) { throw 'python ma kaynch f PATH' }
+$pyw = Join-Path (Split-Path $py.Source) 'pythonw.exe'
+if (-not (Test-Path $pyw)) { $pyw = $py.Source }
+
 if (Test-Path $Root) {
     $bak = "$Root.bak." + (Get-Date -Format 'yyyyMMdd-HHmmss')
     Rename-Item $Root $bak
@@ -92,11 +93,34 @@ $makecert = @(
 'print("OK")'
 ) -join "`n"
 
+# ================= 02b - run.py (redirect log) =================
+Write-Host '>> 02b run.py' -ForegroundColor Cyan
+$runner = @(
+'import os, sys, time'
+''
+'os.chdir(os.path.dirname(os.path.abspath(__file__)))'
+'log = "server.log"'
+'try:'
+'    if os.path.getsize(log) > 2 * 1024 * 1024:'
+'        os.replace(log, "server.old.log")'
+'except OSError:'
+'    pass'
+''
+'f = open(log, "a", encoding="utf-8", buffering=1)'
+'sys.stdout = f'
+'sys.stderr = f'
+'print("")'
+'print("=== start", time.strftime("%Y-%m-%d %H:%M:%S"), "pid", os.getpid(), "===")'
+''
+'src = open("fake.py", encoding="utf-8").read()'
+'exec(compile(src, "fake.py", "exec"), {"__name__": "__main__"})'
+) -join "`n"
+
 # ================= 04 - fake.py =================
 Write-Host '>> 04 fake.py' -ForegroundColor Cyan
 $fake = @(
 'import ssl, json, base64, hashlib, time, uuid, secrets'
-'from http.server import HTTPServer, BaseHTTPRequestHandler'
+'from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler'
 ''
 'YEAR = 365 * 24 * 3600 * 1000'
 ''
@@ -111,6 +135,7 @@ $fake = @(
 '    return b + "." + sig'
 ''
 'class H(BaseHTTPRequestHandler):'
+'    daemon_threads = True'
 '    def do_GET(self): self.x()'
 '    def do_POST(self): self.x()'
 '    def x(self):'
@@ -140,10 +165,11 @@ $fake = @(
 '        self.send_header("Content-Length", str(len(b)))'
 '        self.end_headers()'
 '        self.wfile.write(b)'
+'    def log_message(self, fmt, *a): pass'
 ''
 'ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)'
 'ctx.load_cert_chain("cert.pem")'
-'s = HTTPServer(("0.0.0.0", 443), H)'
+'s = ThreadingHTTPServer(("0.0.0.0", 443), H)'
 's.socket = ctx.wrap_socket(s.socket, server_side=True)'
 'print("fake :443")'
 's.serve_forever()'
@@ -151,16 +177,13 @@ $fake = @(
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText((Join-Path $Root 'makecert.py'), $makecert, $utf8)
-[IO.File]::WriteAllText((Join-Path $Root 'fake.py'),     $fake,     $utf8)
+[IO.File]::WriteAllText((Join-Path $Root 'run.py'),     $runner,  $utf8)
+[IO.File]::WriteAllText((Join-Path $Root 'fake.py'),    $fake,    $utf8)
 
 # ================= 03 - generate + trust =================
 Write-Host '>> 03 generate + trust cert' -ForegroundColor Cyan
 python makecert.py
 if (-not (Test-Path $Cer)) { throw 'cert generation failed' }
-
-Get-ChildItem Cert:\CurrentUser\Root |
-    Where-Object { $_.Subject -like "*CN=$Domain*" } |
-    Remove-Item -Force -ErrorAction SilentlyContinue
 $c = Import-Certificate -FilePath $Cer -CertStoreLocation 'Cert:\CurrentUser\Root'
 Write-Host "   trusted: $($c.Thumbprint)" -ForegroundColor Green
 
@@ -176,15 +199,39 @@ foreach ($t in (Test-Connection -ComputerName $Domain -Count 1 -ErrorAction Sile
     if ("$($t.Address)" -eq '127.0.0.1') { $ok = $true }
 }
 if ($ok) { Write-Host "   $Domain -> 127.0.0.1 OK" -ForegroundColor Green }
-else     { Write-Host "   WARN: ma resoluich l 127.0.0.1 — 3awd ipconfig /flushdns" -ForegroundColor Red }
+else     { Write-Host "   WARN: ma resoluich — 3awd ipconfig /flushdns" -ForegroundColor Red }
 
-# ================= 06 - run =================
+# ================= 06 - autostart task =================
+Write-Host '>> 06 autostart' -ForegroundColor Cyan
+$action  = New-ScheduledTaskAction -Execute $pyw -Argument 'run.py' -WorkingDirectory $Root
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+$set     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+             -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+             -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -DontStopOnIdleEnd
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
+
+Register-ScheduledTask -TaskName $Task -Action $action -Trigger $trigger -Settings $set `
+    -Principal $principal -Description 'sevenauthapi.com local fake auth server' -Force | Out-Null
+Write-Host "   task '$Task' msajjel (AtLogOn)" -ForegroundColor Green
+
+Start-ScheduledTask -TaskName $Task
+Start-Sleep -Seconds 4
+
+# ================= verification =================
+Write-Host ''
+Write-Host '--- verification ---' -ForegroundColor Cyan
+$st = (Get-ScheduledTask -TaskName $Task).State
+Write-Host "   task: $st"
 if (Get-NetTCPConnection -LocalPort 443 -State Listen -ErrorAction SilentlyContinue) {
-    Write-Host '   WARN: port 443 deja msta3mal. L server y9der yfchel.' -ForegroundColor Red
+    Write-Host '   port 443: LISTEN' -ForegroundColor Green
+} else {
+    Write-Host '   port 443: MA KAYCHTACH — chouf C:\seven\server.log' -ForegroundColor Red
+}
+if (Test-Path (Join-Path $Root 'server.log')) {
+    Write-Host '   log: C:\seven\server.log' -ForegroundColor DarkGray
+    Get-Content (Join-Path $Root 'server.log') -Tail 5 | ForEach-Object { Write-Host "     $_" -ForegroundColor DarkGray }
 }
 
 Write-Host ''
-Write-Host 'Kolchi wajed. cert.pem fih la cle privee — khelliha 3ndek.' -ForegroundColor Yellow
-Write-Host 'Ctrl+C kay wqqef l server.' -ForegroundColor DarkGray
-Read-Host 'Daght Enter bach tla3 l server'
-python fake.py
+Write-Host 'Wajed. L server kaytle3 bo7do f kol logon — bla terminal.' -ForegroundColor Green
+Write-Host 'Controle:  Get-ScheduledTask sevenauthapi-fake   |   log: C:\seven\server.log' -ForegroundColor DarkGray
